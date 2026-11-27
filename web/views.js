@@ -146,6 +146,17 @@ export function renderSummaryTab(state, summaries, kpis) {
         : ""
     }
 
+    <div class="card no-print" style="padding:12px 16px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div style="font-size:13px; color:var(--muted);">
+        <strong style="color:var(--ink);">Daily &amp; Period Reports</strong> — Export CSV, Excel, PDF or share directly to Messenger &amp; Email.
+      </div>
+      <div class="action-cell">
+        <button id="summary-goto-reports-btn" class="btn btn-primary btn-sm">Open Full Reports</button>
+        <button id="summary-send-messenger-btn" class="btn btn-messenger btn-sm">Send to Messenger</button>
+        <button id="summary-send-email-btn" class="btn btn-email btn-sm">Send via Email</button>
+      </div>
+    </div>
+
     <div class="kpi-grid">
       <div class="card kpi-card">
         <div class="kpi-label">Finished Stock Available</div>
@@ -549,11 +560,15 @@ export function renderRecoveryTab(state, activeRole) {
       <div class="card" style="display:grid; gap:12px;">
         <div class="section-head" style="margin-bottom:0;">
           <h3>Daily Plant Stock &amp; Movement Log</h3>
-          <div class="sim-group">
-            <label>Date:</label>
-            <select id="daily-log-date-select">
-              ${logs.map((l) => `<option value="${l.date}" ${l.date === activeDay ? "selected" : ""}>${l.date}${l.isToday ? " (Today)" : ""}</option>`).join("")}
-            </select>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <div class="sim-group">
+              <label>Date:</label>
+              <select id="daily-log-date-select">
+                ${logs.map((l) => `<option value="${l.date}" ${l.date === activeDay ? "selected" : ""}>${l.date}${l.isToday ? " (Today)" : ""}</option>`).join("")}
+              </select>
+            </div>
+            <button id="daily-send-messenger-btn" class="btn btn-messenger btn-sm">Send Log to Messenger</button>
+            <button id="daily-send-email-btn" class="btn btn-email btn-sm">Email Daily Log</button>
           </div>
         </div>
         ${
@@ -1029,10 +1044,12 @@ export function renderReportsTab(state, summaries, activeRole) {
           <div style="font-size:12px; color:var(--muted);">Period: ${report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`} • Plant: ${escapeHtml(report.sectionFilter)}</div>
         </div>
         <div class="action-cell no-print">
+          <button id="report-send-messenger-btn" class="btn btn-messenger btn-sm">Send to Messenger</button>
+          <button id="report-send-email-btn" class="btn btn-email btn-sm">Send via Email</button>
           <button id="report-download-csv-btn" class="btn btn-sm">Download CSV</button>
           <button id="report-download-xls-btn" class="btn btn-sm">Download Excel (.xls)</button>
           <button id="report-print-pdf-btn" class="btn btn-primary btn-sm">Print / Save PDF</button>
-          <button id="report-copy-messenger-btn" class="btn btn-sm">Copy Messenger Summary</button>
+          <button id="report-copy-messenger-btn" class="btn btn-sm">Copy Summary</button>
         </div>
       </div>
 

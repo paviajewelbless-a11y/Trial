@@ -5,6 +5,8 @@ import {
   REPROCESS_STATUSES,
   RETURN_REASONS,
   SCHEDULE_PRIORITIES,
+  buildGmailWebComposeUrl,
+  buildMailtoUrl,
   todayIsoDate
 } from "./operations.js";
 
@@ -1355,3 +1357,211 @@ export function openSelectiveResetModal(actions) {
     }
   );
 }
+
+export function openMessengerShareModal({
+  title = "Send Report to Messenger",
+  defaultText = "",
+  onDownloadPng = null,
+  onCopySuccess = null,
+  onSent = null
+}) {
+  const canSystemShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  openModal(
+    title,
+    `
+      <div id="messenger-share-box" class="form-grid">
+        <div style="font-size:12px; color:var(--muted); line-height:1.45;">
+          Review or customize the summary below, then copy &amp; open Messenger (or download a PNG snapshot card to drag directly into your Messenger chat).
+        </div>
+        <div class="form-field">
+          <label>Messenger Message</label>
+          <textarea id="messenger-text-area" rows="10" style="font-family:monospace; font-size:12px; padding:10px; border:1px solid var(--border); border-radius:10px; resize:vertical;">${escapeAttr(defaultText)}</textarea>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="msg-send-open-btn" type="button" class="btn btn-messenger">Copy &amp; Open Messenger</button>
+          <button id="msg-copy-btn" type="button" class="btn">Copy Summary Text</button>
+          ${onDownloadPng ? `<button id="msg-png-btn" type="button" class="btn">Download Image (.png)</button>` : ""}
+          ${canSystemShare ? `<button id="msg-native-share-btn" type="button" class="btn">System Share</button>` : ""}
+        </div>
+      </div>
+    `,
+    (root) => {
+      const textArea = root.querySelector("#messenger-text-area");
+
+      const copyText = async () => {
+        const text = textArea.value;
+        await navigator.clipboard.writeText(text);
+        return text;
+      };
+
+      root.querySelector("#msg-send-open-btn").onclick = async () => {
+        try {
+          await copyText();
+        } catch (_) {}
+        window.open("https://www.messenger.com/", "_blank", "noopener");
+        if (onSent) onSent("Opened Messenger (summary copied — press Ctrl+V to paste)");
+      };
+
+      root.querySelector("#msg-copy-btn").onclick = async () => {
+        try {
+          await copyText();
+          if (onCopySuccess) onCopySuccess("Messenger summary copied to clipboard.");
+        } catch (err) {
+          if (onCopySuccess) onCopySuccess(err?.message || "Clipboard copy failed.");
+        }
+      };
+
+      const pngBtn = root.querySelector("#msg-png-btn");
+      if (pngBtn && onDownloadPng) {
+        pngBtn.onclick = () => onDownloadPng();
+      }
+
+      const nativeBtn = root.querySelector("#msg-native-share-btn");
+      if (nativeBtn && canSystemShare) {
+        nativeBtn.onclick = async () => {
+          try {
+            await navigator.share({ title, text: textArea.value });
+            if (onSent) onSent("Report shared.");
+          } catch (_) {}
+        };
+      }
+    }
+  );
+}
+
+export function openEmailShareModal({
+  title = "Send Plant Report via Email",
+  defaultTo = "",
+  defaultSubject = "",
+  defaultBody = "",
+  suggestedEmails = [],
+  onDownloadCsv = null,
+  onDownloadXls = null,
+  onToast = null,
+  onSent = null
+}) {
+  const uniqueSuggestions = [...new Set(suggestedEmails.map((e) => String(e || "").trim().toLowerCase()).filter(Boolean))];
+
+  openModal(
+    title,
+    `
+      <form id="email-share-form" class="form-grid">
+        ${
+          uniqueSuggestions.length
+            ? `<div class="form-field">
+                <label>Quick-Add Team Recipients</label>
+                <div class="chip-row">
+                  ${uniqueSuggestions
+                    .map((email) => `<button type="button" class="chip" data-toggle-email="${escapeAttr(email)}">+ ${escapeAttr(email)}</button>`)
+                    .join("")}
+                </div>
+              </div>`
+            : ""
+        }
+        <div class="form-field">
+          <label>To (comma-separated emails)</label>
+          <input id="email-to-input" name="to" value="${escapeAttr(defaultTo)}" placeholder="manager@company.com, supervisor@gmail.com" />
+        </div>
+        <div class="form-field">
+          <label>Subject</label>
+          <input id="email-subject-input" name="subject" value="${escapeAttr(defaultSubject)}" required />
+        </div>
+        <div class="form-field">
+          <label>Report Body</label>
+          <textarea id="email-body-input" name="body" rows="10" style="font-family:monospace; font-size:12px; padding:10px; border:1px solid var(--border); border-radius:10px; resize:vertical;">${escapeAttr(defaultBody)}</textarea>
+        </div>
+        ${
+          onDownloadCsv || onDownloadXls
+            ? `<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--muted);">
+                <span>Need an attachment?</span>
+                ${onDownloadCsv ? `<button id="email-dl-csv-btn" type="button" class="btn btn-sm">Download CSV</button>` : ""}
+                ${onDownloadXls ? `<button id="email-dl-xls-btn" type="button" class="btn btn-sm">Download Excel (.xls)</button>` : ""}
+              </div>`
+            : ""
+        }
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="email-open-gmail-btn" type="button" class="btn btn-email">Send via Gmail</button>
+          <button id="email-open-mailto-btn" type="button" class="btn btn-primary">Open Default Mail App</button>
+          <button id="email-copy-body-btn" type="button" class="btn">Copy Email Text</button>
+        </div>
+      </form>
+    `,
+    (root) => {
+      const toInp = root.querySelector("#email-to-input");
+      const subjInp = root.querySelector("#email-subject-input");
+      const bodyInp = root.querySelector("#email-body-input");
+
+      const parseEmails = () =>
+        toInp.value
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+      const syncChips = () => {
+        const current = new Set(parseEmails().map((e) => e.toLowerCase()));
+        root.querySelectorAll("[data-toggle-email]").forEach((btn) => {
+          const em = btn.dataset.toggleEmail.toLowerCase();
+          btn.classList.toggle("active", current.has(em));
+        });
+      };
+      syncChips();
+
+      root.querySelectorAll("[data-toggle-email]").forEach((btn) => {
+        btn.onclick = () => {
+          const target = btn.dataset.toggleEmail;
+          const list = parseEmails();
+          const idx = list.findIndex((x) => x.toLowerCase() === target.toLowerCase());
+          if (idx >= 0) list.splice(idx, 1);
+          else list.push(target);
+          toInp.value = list.join(", ");
+          syncChips();
+        };
+      });
+
+      const dlCsvBtn = root.querySelector("#email-dl-csv-btn");
+      if (dlCsvBtn && onDownloadCsv) dlCsvBtn.onclick = () => onDownloadCsv();
+
+      const dlXlsBtn = root.querySelector("#email-dl-xls-btn");
+      if (dlXlsBtn && onDownloadXls) dlXlsBtn.onclick = () => onDownloadXls();
+
+      root.querySelector("#email-open-gmail-btn").onclick = async () => {
+        const to = toInp.value.trim();
+        const subject = subjInp.value.trim();
+        const fullBody = bodyInp.value;
+        try {
+          await navigator.clipboard.writeText(fullBody);
+        } catch (_) {}
+        const safeUrlBody =
+          fullBody.length > 1600
+            ? `${fullBody.slice(0, 1500)}\n\n... (Full report copied to clipboard — press Ctrl+V if needed)`
+            : fullBody;
+        const gmailUrl = buildGmailWebComposeUrl({ to, subject, body: safeUrlBody });
+        window.open(gmailUrl, "_blank", "noopener");
+        if (onSent) onSent("Opened Gmail compose window.");
+      };
+
+      root.querySelector("#email-open-mailto-btn").onclick = async () => {
+        const to = toInp.value.trim();
+        const subject = subjInp.value.trim();
+        const fullBody = bodyInp.value;
+        try {
+          await navigator.clipboard.writeText(fullBody);
+        } catch (_) {}
+        const safeBody = fullBody.length > 1500 ? fullBody.slice(0, 1500) : fullBody;
+        window.location.href = buildMailtoUrl({ to, subject, body: safeBody });
+        if (onSent) onSent("Opened default Mail client.");
+      };
+
+      root.querySelector("#email-copy-body-btn").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(`Subject: ${subjInp.value.trim()}\n\n${bodyInp.value}`);
+          if (onToast) onToast("Email subject & report copied to clipboard.");
+        } catch (err) {
+          if (onToast) onToast(err?.message || "Clipboard copy failed.");
+        }
+      };
+    }
+  );
+}
+

@@ -798,7 +798,97 @@ export function buildMessengerSummaryText(report) {
   if (inc.has("Schedule")) {
     lines.push(`Scheduled Runs in Period: ${report.filteredSchedules.length}`);
   }
+  if (report.sectionSummaries?.length) {
+    lines.push("", "*By Plant Section:*");
+    for (const s of report.sectionSummaries) {
+      lines.push(`• ${s.section}: Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg) | Prod ${s.totalBags} b (${s.recoveryPct.toFixed(1)}%)`);
+    }
+  }
   return lines.join("\n");
+}
+
+export function buildDetailedEmailReportText(report) {
+  const period = report.isDailyReport ? `Daily (${report.startDate})` : `${report.startDate} to ${report.endDate}`;
+  const inc = new Set(report.includedSections);
+  const lines = [
+    "10K AGRI FEEDS - BULACAN PLANT OPERATIONS REPORT",
+    `Period: ${period}`,
+    `Plant Filter: ${report.sectionFilter}`,
+    "------------------------------------------------------------"
+  ];
+  if (inc.has("Inventory")) {
+    lines.push(`Finished Stock Available: ${report.totalAvailableStockKg.toFixed(0)} kg (${report.totalAvailableBags.toFixed(1)} bags)`);
+  }
+  if (inc.has("Recovery")) {
+    lines.push(`Production Batches: ${report.filteredBatches.length} runs | ${report.totalProducedBags} bags | ${report.totalRecoveredKg.toFixed(0)} kg (${report.avgRecoveryPct.toFixed(2)}% recovery)`);
+  }
+  if (inc.has("Dispatches")) {
+    lines.push(`Dispatched Deliveries: ${report.filteredDispatches.length} trips | ${report.totalDispatchedKg.toFixed(0)} kg net (${report.deliveredCount} Delivered, ${report.returnedCount} Returned, ${report.heldCount} Held)`);
+  }
+  if (inc.has("Orders")) {
+    lines.push(`Active Open Orders: ${report.activeOpenOrders.length} orders (${report.totalOpenOrdersKg.toFixed(0)} kg remaining)`);
+  }
+  if (inc.has("Schedule")) {
+    lines.push(`Scheduled Runs: ${report.filteredSchedules.length}`);
+  }
+
+  if (report.sectionSummaries?.length) {
+    lines.push("", "PLANT SECTION BREAKDOWN:");
+    for (const s of report.sectionSummaries) {
+      lines.push(`- ${s.section}: ${s.skuCount} SKUs | Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg) | Produced ${s.totalBags} b (${s.totalRecoveredKg.toFixed(0)} kg, ${s.recoveryPct.toFixed(1)}%)`);
+    }
+  }
+
+  if (inc.has("Dispatches") && report.filteredDispatches.length) {
+    lines.push("", "RECENT DISPATCHES IN PERIOD:");
+    for (const d of report.filteredDispatches.slice(0, 15)) {
+      lines.push(`- ${d.date} | ${d.drReference} | ${d.customer} | ${d.productName} | ${d.bagsDispatched} bags (${effectiveDispatchWeightKg(d).toFixed(0)} kg net) | ${resolvedDispatchStatus(d)}`);
+    }
+  }
+
+  if (inc.has("Orders") && report.activeOpenOrders.length) {
+    lines.push("", "ACTIVE OPEN ORDERS:");
+    for (const o of report.activeOpenOrders.slice(0, 15)) {
+      const rem = Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0));
+      lines.push(`- ${o.orderCode} | ${o.customer} | ${o.productName} | ${rem.toFixed(0)} kg left | Due ${o.dueDate} | ${o.status}`);
+    }
+  }
+
+  lines.push("", "Generated from FeedMill Ops Web Portal.");
+  return lines.join("\n");
+}
+
+export function buildDailyLogMessengerText(dayLog, sectionFilter = "ALL") {
+  if (!dayLog) return "No daily plant log data available.";
+  const rows = (dayLog.skuRows || []).filter(
+    (r) => sectionFilter === "ALL" || r.sku.section === sectionFilter
+  );
+  const lines = [
+    "*10K AGRI FEEDS - DAILY PLANT LOG*",
+    `Date: ${dayLog.date}${dayLog.isToday ? " (Today)" : ""} | Plant: ${sectionFilter}`,
+    "==============================",
+    `Closing Stock: ${Number(dayLog.totalClosingStockKg || 0).toFixed(0)} kg`,
+    `Produced Today: ${Number(dayLog.totalProducedDayKg || 0).toFixed(0)} kg`,
+    `Dispatched Today: ${Number(dayLog.totalDispatchedDayKg || 0).toFixed(0)} kg`,
+    `Orders on Date: ${(dayLog.dayOrders || []).length}`,
+    "",
+    "*Active SKU Movements:*"
+  ];
+  const moved = rows.filter((r) => r.producedDayKg > 0 || r.dispatchedDayKg > 0 || r.openOrdersSnapshotKg > 0);
+  const list = moved.length ? moved : rows.slice(0, 10);
+  for (const r of list.slice(0, 15)) {
+    lines.push(`• ${r.sku.productName}: Stock ${r.closingBags.toFixed(1)} b | Prod ${r.producedDayBags} b | Disp ${r.dispatchedDayBags} b`);
+  }
+  return lines.join("\n");
+}
+
+export function buildMailtoUrl({ to = "", subject = "", body = "" }) {
+  const cleanTo = String(to || "").trim();
+  const params = new URLSearchParams({
+    subject: String(subject || ""),
+    body: String(body || "")
+  });
+  return `mailto:${encodeURIComponent(cleanTo)}?${params.toString().replace(/\+/g, "%20")}`;
 }
 
 // =========================================================================

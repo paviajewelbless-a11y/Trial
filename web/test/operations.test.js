@@ -9,11 +9,14 @@ import {
   buildBreadcrumbPayload,
   buildCsvReport,
   buildCustomerCreatePayload,
+  buildDailyLogMessengerText,
+  buildDetailedEmailReportText,
   buildDispatchCreatePayload,
   buildGmailWebComposeUrl,
   buildInviteDocId,
   buildInviteEmailPayload,
   buildInviteRoleUpdatePayload,
+  buildMailtoUrl,
   buildMemberRoleUpdatePayload,
   buildMessengerSummaryText,
   buildOrderCreatePayload,
@@ -314,5 +317,41 @@ test("parseBulkBatchRows, missingCatalogEntities, and additional payload builder
   const bc = buildBreadcrumbPayload("uid1", { category: "Orders", action: "Test" }, ts);
   assert.equal(bc.category, "Orders");
   assert.equal(bc.actorType, "User");
+});
+
+test("buildDetailedEmailReportText, buildDailyLogMessengerText, and buildMailtoUrl format report sharing outputs", () => {
+  const skus = [{ productName: "Hog Starter Crumble", section: "SAN ROQUE", openingStockKg: 500, standardBagWeightKg: 25 }];
+  const batches = [{ date: "2026-11-26", section: "SAN ROQUE", productName: "Hog Starter Crumble", bagsProduced: 20, expectedWeightKg: 500, actualRecoveredKg: 495 }];
+  const dispatches = [{ date: "2026-11-26", drReference: "DR-900", customer: "Farm One", sourcePlant: "SAN ROQUE", productName: "Hog Starter Crumble", bagsDispatched: 10, totalWeightKg: 250 }];
+  const orders = [{ orderDate: "2026-11-26", dueDate: "2026-11-27", orderCode: "PO-900", customer: "Farm One", productName: "Hog Starter Crumble", totalWeightKg: 500, dispatchedWeightKg: 250, status: "Partially Dispatched" }];
+  const summaries = computeSkuSummaries({ skus, batches, dispatches, orders });
+
+  const report = buildPlantReport({
+    startDate: "2026-11-26",
+    endDate: "2026-11-26",
+    sectionFilter: "ALL",
+    skus,
+    batches,
+    dispatches,
+    orders,
+    summaries
+  });
+
+  const emailText = buildDetailedEmailReportText(report);
+  assert.match(emailText, /10K AGRI FEEDS - BULACAN PLANT OPERATIONS REPORT/);
+  assert.match(emailText, /DR-900/);
+  assert.match(emailText, /PO-900/);
+
+  const logs = computeDailyLogs({ skus, batches, dispatches, orders, todayIso: "2026-11-26" });
+  const dailyMsg = buildDailyLogMessengerText(logs[0], "SAN ROQUE");
+  assert.match(dailyMsg, /\*10K AGRI FEEDS - DAILY PLANT LOG\*/);
+  assert.match(dailyMsg, /Hog Starter Crumble/);
+
+  const mailto = buildMailtoUrl({
+    to: "manager@10kfeeds.ph",
+    subject: "Plant Report",
+    body: "Hello Team"
+  });
+  assert.equal(mailto, "mailto:manager%4010kfeeds.ph?subject=Plant%20Report&body=Hello%20Team");
 });
 

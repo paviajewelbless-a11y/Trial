@@ -35,6 +35,8 @@ import {
   buildCsvReport,
   buildCustomerCreatePayload,
   buildCustomerUpdatePayload,
+  buildDailyLogMessengerText,
+  buildDetailedEmailReportText,
   buildDispatchCreatePayload,
   buildDispatchUpdatePayload,
   buildGmailWebComposeUrl,
@@ -59,6 +61,7 @@ import {
   buildSkuUpdatePayload,
   buildWebInviteLink,
   buildWorkspaceInvitePayload,
+  computeDailyLogs,
   computeKpis,
   computeRawMaterialForecasts,
   computeSkuSummaries,
@@ -97,8 +100,10 @@ import {
   openConfirmModal,
   openCustomerModal,
   openDispatchModal,
+  openEmailShareModal,
   openFlagReprocessModal,
   openInviteMemberModal,
+  openMessengerShareModal,
   openOrderModal,
   openRawMaterialModal,
   openReprocessModal,
@@ -124,7 +129,7 @@ const TABS = [
   { id: "materials", label: "Materials & BOM", subtitle: "Macro/Micro stock, demand simulator & Feed BOMs" },
   { id: "reprocess", label: "Reprocess", subtitle: "Returned feed quarantine & inventory restoration" },
   { id: "customers", label: "Customers", subtitle: "Customer directory & fulfillment summary" },
-  { id: "reports", label: "Reports & Backup", subtitle: "CSV, Excel, PDF reports, JSON backup & reset" },
+  { id: "reports", label: "Reports", subtitle: "CSV, Excel, PDF, Messenger/Email sharing, JSON backup & reset" },
   { id: "team", label: "Team & Access", subtitle: "Shared workspace, invites & role permissions" },
   { id: "history", label: "History", subtitle: "Recent workspace actions & sync audit trail" }
 ];
@@ -578,6 +583,221 @@ function downloadFile(filename, content, mimeType) {
 
 function downloadCsv(filename, headers, rows) {
   downloadFile(filename, buildCsvReport(headers, rows), "text/csv;charset=utf-8;");
+}
+
+function getTeamSuggestedEmails() {
+  const list = [];
+  if (state.user?.email) list.push(state.user.email);
+  for (const m of state.teamMembers) if (m.email) list.push(m.email);
+  for (const inv of state.workspaceInvites) if (inv.memberEmail) list.push(inv.memberEmail);
+  return list;
+}
+
+function exportReportCsv(report) {
+  const rows = report.sectionSummaries.map((s) => [
+    s.section,
+    s.skuCount,
+    s.totalAvailableBags.toFixed(1),
+    s.totalAvailableStockKg.toFixed(1),
+    s.totalBags,
+    s.totalRecoveredKg.toFixed(1),
+    s.recoveryPct.toFixed(2)
+  ]);
+  downloadCsv(
+    `bulacan_plant_report_${report.startDate}_to_${report.endDate}.csv`,
+    ["Plant Section", "SKUs", "Available Bags", "Available Kg", "Produced Bags", "Recovered Kg", "Recovery %"],
+    rows
+  );
+  logBreadcrumb({ category: "Reports", action: "Exported Plant CSV", details: `${report.startDate} to ${report.endDate}`, severity: "Info" });
+}
+
+function exportReportXls(report) {
+  const html = `
+    <html><head><meta charset="utf-8"/></head><body>
+      <h2>10K AGRI FEEDS • BULACAN PLANT REPORT (${escapeHtml(report.startDate)} to ${escapeHtml(report.endDate)})</h2>
+      <p>Plant Filter: ${escapeHtml(report.sectionFilter)} | Dispatched: ${report.totalDispatchedKg.toFixed(0)} kg | Open Orders: ${report.totalOpenOrdersKg.toFixed(0)} kg</p>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Section</th><th>SKUs</th><th>Available Bags</th><th>Available Kg</th><th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th></tr></thead>
+        <tbody>
+          ${report.sectionSummaries
+            .map(
+              (s) => `<tr><td>${escapeHtml(s.section)}</td><td>${s.skuCount}</td><td>${s.totalAvailableBags.toFixed(1)}</td><td>${s.totalAvailableStockKg.toFixed(1)}</td><td>${s.totalBags}</td><td>${s.totalRecoveredKg.toFixed(1)}</td><td>${s.recoveryPct.toFixed(2)}%</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </body></html>
+  `;
+  downloadFile(`bulacan_plant_report_${report.startDate}.xls`, html, "application/vnd.ms-excel");
+  logBreadcrumb({ category: "Reports", action: "Exported Excel Report", details: `${report.startDate} to ${report.endDate}`, severity: "Info" });
+}
+
+function downloadReportSnapshotPng(report) {
+  const canvas = document.createElement("canvas");
+  const width = 960;
+  const rows = report.sectionSummaries || [];
+  const height = 390 + rows.length * 46;
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    showToast("Canvas snapshot is not supported in this browser.");
+    return;
+  }
+
+  // Background & emerald header bar
+  ctx.fillStyle = "#f4f7f5";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#0e5a3a";
+  ctx.fillRect(0, 0, width, 112);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 24px Inter, Segoe UI, sans-serif";
+  ctx.fillText("10K AGRI FEEDS • BULACAN PLANT REPORT", 32, 46);
+  ctx.fillStyle = "#cce8d9";
+  ctx.font = "16px Inter, Segoe UI, sans-serif";
+  const periodLabel = report.isDailyReport ? `Daily (${report.startDate})` : `${report.startDate} to ${report.endDate}`;
+  ctx.fillText(`Period: ${periodLabel}   |   Plant Filter: ${report.sectionFilter}`, 32, 82);
+
+  // 4 KPI boxes
+  const kpis = [
+    { label: "AVAILABLE STOCK", value: `${formatNum(report.totalAvailableStockKg, 0)} kg`, sub: `${formatNum(report.totalAvailableBags, 1)} bags` },
+    { label: "PRODUCED IN PERIOD", value: `${report.totalProducedBags} b`, sub: `${formatNum(report.totalRecoveredKg, 0)} kg (${formatNum(report.avgRecoveryPct, 1)}%)` },
+    { label: "DISPATCHED IN PERIOD", value: `${formatNum(report.totalDispatchedKg, 0)} kg`, sub: `${report.filteredDispatches.length} trips` },
+    { label: "ACTIVE OPEN ORDERS", value: `${report.activeOpenOrders.length}`, sub: `${formatNum(report.totalOpenOrdersKg, 0)} kg left` }
+  ];
+  const cardW = 212;
+  const gap = 16;
+  kpis.forEach((k, idx) => {
+    const x = 32 + idx * (cardW + gap);
+    const y = 134;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x, y, cardW, 102);
+    ctx.strokeStyle = "#d9e3dd";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y, cardW, 102);
+
+    ctx.fillStyle = "#5c6b63";
+    ctx.font = "bold 11px Inter, Segoe UI, sans-serif";
+    ctx.fillText(k.label, x + 14, y + 26);
+    ctx.fillStyle = "#16201c";
+    ctx.font = "bold 24px Inter, Segoe UI, sans-serif";
+    ctx.fillText(k.value, x + 14, y + 60);
+    ctx.fillStyle = "#5c6b63";
+    ctx.font = "13px Inter, Segoe UI, sans-serif";
+    ctx.fillText(k.sub, x + 14, y + 84);
+  });
+
+  // Table card
+  const tblY = 258;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(32, tblY, width - 64, 52 + rows.length * 46);
+  ctx.strokeStyle = "#d9e3dd";
+  ctx.strokeRect(32, tblY, width - 64, 52 + rows.length * 46);
+
+  ctx.fillStyle = "#e8f0ec";
+  ctx.fillRect(32, tblY, width - 64, 42);
+  ctx.fillStyle = "#16201c";
+  ctx.font = "bold 13px Inter, Segoe UI, sans-serif";
+  const cols = [48, 280, 410, 620, 770];
+  ctx.fillText("PLANT SECTION", cols[0], tblY + 26);
+  ctx.fillText("SKUs", cols[1], tblY + 26);
+  ctx.fillText("AVAILABLE STOCK", cols[2], tblY + 26);
+  ctx.fillText("PRODUCED", cols[3], tblY + 26);
+  ctx.fillText("RECOVERY", cols[4], tblY + 26);
+
+  rows.forEach((s, idx) => {
+    const ry = tblY + 42 + idx * 46;
+    ctx.strokeStyle = "#e4ece7";
+    ctx.beginPath();
+    ctx.moveTo(32, ry);
+    ctx.lineTo(width - 32, ry);
+    ctx.stroke();
+
+    ctx.fillStyle = "#16201c";
+    ctx.font = "bold 14px Inter, Segoe UI, sans-serif";
+    ctx.fillText(String(s.section || ""), cols[0], ry + 28);
+    ctx.font = "14px Inter, Segoe UI, sans-serif";
+    ctx.fillText(String(s.skuCount), cols[1], ry + 28);
+    ctx.fillText(`${formatNum(s.totalAvailableBags, 1)} b (${formatNum(s.totalAvailableStockKg, 0)} kg)`, cols[2], ry + 28);
+    ctx.fillText(`${s.totalBags} b (${formatNum(s.totalRecoveredKg, 0)} kg)`, cols[3], ry + 28);
+    ctx.fillStyle = s.recoveryPct >= 98.5 ? "#0e7c4f" : "#b26a00";
+    ctx.font = "bold 14px Inter, Segoe UI, sans-serif";
+    ctx.fillText(`${formatNum(s.recoveryPct, 2)}%`, cols[4], ry + 28);
+  });
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `bulacan_plant_report_${report.startDate}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Downloaded PNG snapshot: bulacan_plant_report_${report.startDate}.png`);
+  }, "image/png");
+}
+
+function openPlantReportMessengerModal(report) {
+  const periodLabel = report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`;
+  openMessengerShareModal({
+    title: "Send Plant Report to Messenger",
+    defaultText: buildMessengerSummaryText(report),
+    onDownloadPng: () => downloadReportSnapshotPng(report),
+    onCopySuccess: (msg) => showToast(msg),
+    onSent: (msg) => {
+      showToast(msg);
+      logBreadcrumb({ category: "Reports", action: "Shared Report to Messenger", details: `${periodLabel} (${report.sectionFilter})`, severity: "Info" });
+    }
+  });
+}
+
+function openPlantReportEmailModal(report) {
+  const periodLabel = report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`;
+  const subject = `10K Agri Feeds • Bulacan Plant Report (${periodLabel})`;
+  openEmailShareModal({
+    title: "Send Plant Report via Email",
+    defaultSubject: subject,
+    defaultBody: buildDetailedEmailReportText(report),
+    suggestedEmails: getTeamSuggestedEmails(),
+    onDownloadCsv: () => exportReportCsv(report),
+    onDownloadXls: () => exportReportXls(report),
+    onToast: (msg) => showToast(msg),
+    onSent: (msg) => {
+      showToast(msg);
+      logBreadcrumb({ category: "Reports", action: "Prepared Email Report", details: `${periodLabel} (${report.sectionFilter})`, severity: "Info" });
+    }
+  });
+}
+
+function openDailyLogMessengerModal(dayLog) {
+  openMessengerShareModal({
+    title: `Send Daily Log (${dayLog.date}) to Messenger`,
+    defaultText: buildDailyLogMessengerText(dayLog, state.sectionFilter),
+    onCopySuccess: (msg) => showToast(msg),
+    onSent: (msg) => {
+      showToast(msg);
+      logBreadcrumb({ category: "Reports", action: "Shared Daily Log to Messenger", details: dayLog.date, severity: "Info" });
+    }
+  });
+}
+
+function openDailyLogEmailModal(dayLog) {
+  const subject = `10K Agri Feeds • Daily Plant Log (${dayLog.date})`;
+  const body = buildDailyLogMessengerText(dayLog, state.sectionFilter).replace(/\*/g, "");
+  openEmailShareModal({
+    title: `Email Daily Plant Log (${dayLog.date})`,
+    defaultSubject: subject,
+    defaultBody: body,
+    suggestedEmails: getTeamSuggestedEmails(),
+    onToast: (msg) => showToast(msg),
+    onSent: (msg) => {
+      showToast(msg);
+      logBreadcrumb({ category: "Reports", action: "Prepared Daily Log Email", details: dayLog.date, severity: "Info" });
+    }
+  });
 }
 
 function applyRecalcOrderOps(ops, ownerId, orderId, dispatchesList) {
@@ -1256,11 +1476,24 @@ function render() {
   const topbarActions = document.getElementById("topbar-actions");
   topbarActions.innerHTML = activeRole.canWriteOperations
     ? `
+      <button id="top-reports-btn" class="btn btn-sm">Reports</button>
       <button id="top-new-order" class="btn btn-sm">+ New Order</button>
       <button id="top-log-dispatch" class="btn btn-sm">+ Log Dispatch</button>
       <button id="top-log-batch" class="btn btn-primary btn-sm">+ Log Batch</button>
     `
-    : `<span class="pill pill-neutral">Read-Only (${activeRole.label})</span>`;
+    : `
+      <button id="top-reports-btn" class="btn btn-sm">Reports</button>
+      <span class="pill pill-neutral">Read-Only (${activeRole.label})</span>
+    `;
+
+  const topRepBtn = document.getElementById("top-reports-btn");
+  if (topRepBtn) {
+    topRepBtn.onclick = () => {
+      state.activeTab = "reports";
+      state.searchText = "";
+      render();
+    };
+  }
 
   if (activeRole.canWriteOperations) {
     document.getElementById("top-new-order").onclick = () => openOrderModal(state, null, modalActions);
@@ -1344,7 +1577,7 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
     };
   }
 
-  // Summary quick-jump
+  // Summary quick-jump & quick-share
   viewRoot.querySelectorAll("[data-goto-tab]").forEach((btn) => {
     btn.onclick = () => {
       state.activeTab = btn.dataset.gotoTab;
@@ -1352,6 +1585,34 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
       render();
     };
   });
+
+  const buildTodayOrCurrentReport = () =>
+    buildPlantReport({
+      startDate: state.reportStartDate,
+      endDate: state.reportEndDate,
+      sectionFilter: state.reportSectionFilter,
+      includedSections: state.reportIncludedSections,
+      skus: state.skus,
+      batches: state.batches,
+      dispatches: state.dispatches,
+      orders: state.orders,
+      schedules: state.schedules,
+      summaries
+    });
+
+  const sumGoRepBtn = document.getElementById("summary-goto-reports-btn");
+  if (sumGoRepBtn) {
+    sumGoRepBtn.onclick = () => {
+      state.activeTab = "reports";
+      state.searchText = "";
+      render();
+    };
+  }
+  const sumMsgBtn = document.getElementById("summary-send-messenger-btn");
+  if (sumMsgBtn) sumMsgBtn.onclick = () => openPlantReportMessengerModal(buildTodayOrCurrentReport());
+
+  const sumEmailBtn = document.getElementById("summary-send-email-btn");
+  if (sumEmailBtn) sumEmailBtn.onclick = () => openPlantReportEmailModal(buildTodayOrCurrentReport());
 
   // Inventory actions & simulator controls
   const addSkuBtn = document.getElementById("add-sku-btn");
@@ -1624,6 +1885,35 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
   const dailyDateSel = document.getElementById("daily-log-date-select");
   if (dailyDateSel) {
     dailyDateSel.onchange = () => { state.selectedDailyLogDate = dailyDateSel.value; render(); };
+  }
+
+  const getActiveDailyLog = () => {
+    const logs = computeDailyLogs({
+      skus: state.skus,
+      batches: state.batches,
+      dispatches: state.dispatches,
+      orders: state.orders
+    });
+    const activeDay = state.selectedDailyLogDate && logs.some((l) => l.date === state.selectedDailyLogDate)
+      ? state.selectedDailyLogDate
+      : logs[0]?.date || todayIsoDate();
+    return logs.find((l) => l.date === activeDay) || logs[0];
+  };
+
+  const dailyMsgBtn = document.getElementById("daily-send-messenger-btn");
+  if (dailyMsgBtn) {
+    dailyMsgBtn.onclick = () => {
+      const log = getActiveDailyLog();
+      if (log) openDailyLogMessengerModal(log);
+    };
+  }
+
+  const dailyEmailBtn = document.getElementById("daily-send-email-btn");
+  if (dailyEmailBtn) {
+    dailyEmailBtn.onclick = () => {
+      const log = getActiveDailyLog();
+      if (log) openDailyLogEmailModal(log);
+    };
   }
 
   const batchAddBtn = document.getElementById("batch-add-btn");
@@ -1936,51 +2226,24 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
     };
   });
 
+  const repSendMsgBtn = document.getElementById("report-send-messenger-btn");
+  if (repSendMsgBtn) {
+    repSendMsgBtn.onclick = () => openPlantReportMessengerModal(buildCurrentReport());
+  }
+
+  const repSendEmailBtn = document.getElementById("report-send-email-btn");
+  if (repSendEmailBtn) {
+    repSendEmailBtn.onclick = () => openPlantReportEmailModal(buildCurrentReport());
+  }
+
   const repCsvBtn = document.getElementById("report-download-csv-btn");
   if (repCsvBtn) {
-    repCsvBtn.onclick = () => {
-      const r = buildCurrentReport();
-      const rows = r.sectionSummaries.map((s) => [
-        s.section,
-        s.skuCount,
-        s.totalAvailableBags.toFixed(1),
-        s.totalAvailableStockKg.toFixed(1),
-        s.totalBags,
-        s.totalRecoveredKg.toFixed(1),
-        s.recoveryPct.toFixed(2)
-      ]);
-      downloadCsv(
-        `bulacan_plant_report_${r.startDate}_to_${r.endDate}.csv`,
-        ["Plant Section", "SKUs", "Available Bags", "Available Kg", "Produced Bags", "Recovered Kg", "Recovery %"],
-        rows
-      );
-      logBreadcrumb({ category: "Reports", action: "Exported Plant CSV", details: `${r.startDate} to ${r.endDate}`, severity: "Info" });
-    };
+    repCsvBtn.onclick = () => exportReportCsv(buildCurrentReport());
   }
 
   const repXlsBtn = document.getElementById("report-download-xls-btn");
   if (repXlsBtn) {
-    repXlsBtn.onclick = () => {
-      const r = buildCurrentReport();
-      const html = `
-        <html><head><meta charset="utf-8"/></head><body>
-          <h2>10K AGRI FEEDS • BULACAN PLANT REPORT (${escapeHtml(r.startDate)} to ${escapeHtml(r.endDate)})</h2>
-          <p>Plant Filter: ${escapeHtml(r.sectionFilter)} | Dispatched: ${r.totalDispatchedKg.toFixed(0)} kg | Open Orders: ${r.totalOpenOrdersKg.toFixed(0)} kg</p>
-          <table border="1" cellspacing="0" cellpadding="6">
-            <thead><tr><th>Section</th><th>SKUs</th><th>Available Bags</th><th>Available Kg</th><th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th></tr></thead>
-            <tbody>
-              ${r.sectionSummaries
-                .map(
-                  (s) => `<tr><td>${escapeHtml(s.section)}</td><td>${s.skuCount}</td><td>${s.totalAvailableBags.toFixed(1)}</td><td>${s.totalAvailableStockKg.toFixed(1)}</td><td>${s.totalBags}</td><td>${s.totalRecoveredKg.toFixed(1)}</td><td>${s.recoveryPct.toFixed(2)}%</td></tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </body></html>
-      `;
-      downloadFile(`bulacan_plant_report_${r.startDate}.xls`, html, "application/vnd.ms-excel");
-      logBreadcrumb({ category: "Reports", action: "Exported Excel Report", details: `${r.startDate} to ${r.endDate}`, severity: "Info" });
-    };
+    repXlsBtn.onclick = () => exportReportXls(buildCurrentReport());
   }
 
   const repPdfBtn = document.getElementById("report-print-pdf-btn");
