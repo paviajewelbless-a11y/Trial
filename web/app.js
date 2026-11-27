@@ -278,8 +278,14 @@ async function logBreadcrumb({ category, action, details = "", entityRef = "", s
 }
 
 async function commitOperationsInChunks(ops) {
-  for (let i = 0; i < ops.length; i += 350) {
-    const chunk = ops.slice(i, i + 350);
+  const batchOps = [];
+  const recreateOps = [];
+  for (const op of ops) {
+    if (op.type === "recreate") recreateOps.push(op);
+    else batchOps.push(op);
+  }
+  for (let i = 0; i < batchOps.length; i += 350) {
+    const chunk = batchOps.slice(i, i + 350);
     const batch = writeBatch(db);
     for (const op of chunk) {
       if (op.type === "set") batch.set(op.ref, op.data);
@@ -287,6 +293,10 @@ async function commitOperationsInChunks(ops) {
       else if (op.type === "delete") batch.delete(op.ref);
     }
     await batch.commit();
+  }
+  for (const op of recreateOps) {
+    await deleteDoc(op.ref);
+    await setDoc(op.ref, op.data);
   }
 }
 
@@ -601,9 +611,8 @@ function applyRecalcOrderOps(ops, ownerId, orderId, dispatchesList) {
       }
     });
   } else {
-    ops.push({ type: "delete", ref: orderRef });
     ops.push({
-      type: "set",
+      type: "recreate",
       ref: orderRef,
       data: buildOrderCreatePayload(
         ownerId,
@@ -668,9 +677,8 @@ const modalActions = {
           await updateDoc(ref, buildOrderUpdatePayload(input, existingOrder.dispatchedWeightKg, serverTimestamp()));
         } else {
           const ops = [
-            { type: "delete", ref },
             {
-              type: "set",
+              type: "recreate",
               ref,
               data: buildOrderCreatePayload(
                 ownerId,
@@ -1475,9 +1483,8 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
       const restoredStatus = disp > 0 ? "Partially Dispatched" : "Open";
       const ref = doc(db, "users", ownerId, "orders", ord.id);
       await commitOperationsInChunks([
-        { type: "delete", ref },
         {
-          type: "set",
+          type: "recreate",
           ref,
           data: buildOrderCreatePayload(ownerId, { ...ord, status: restoredStatus }, serverTimestamp())
         }
