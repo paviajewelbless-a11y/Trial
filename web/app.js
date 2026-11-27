@@ -25,12 +25,15 @@ import {
   HOSTED_WEB_URL,
   PLANT_SECTIONS,
   RAW_CATEGORIES,
+  WORKSPACE_ROLE_OPTIONS,
   buildBatchCreatePayload,
   buildCsvReport,
   buildDispatchCreatePayload,
   buildGmailWebComposeUrl,
   buildInviteDocId,
   buildInviteEmailPayload,
+  buildInviteRoleUpdatePayload,
+  buildMemberRoleUpdatePayload,
   buildOrderCreatePayload,
   buildRawMaterialCreatePayload,
   buildScheduleCreatePayload,
@@ -83,6 +86,7 @@ const state = {
   teamMembers: [],
   workspaceInvites: [],
   myMemberRecord: null,
+  updatingAccessKeys: new Set(),
   unsubInvites: null,
   unsubWorkspace: []
 };
@@ -323,6 +327,92 @@ async function declineOrLeaveInvite(invite) {
   showToast("Invitation declined.");
   if (state.activeWorkspaceOwnerId === ownerId) {
     subscribeWorkspace(user.uid);
+  }
+}
+
+async function switchMemberAccessRole({ memberUid, inviteId, memberEmail, memberName, newRole }) {
+  const ownerId = state.activeWorkspaceOwnerId;
+  if (!ownerId || !memberUid || memberUid === ownerId) return;
+  const resolvedRole = resolveRole(newRole).label;
+  const lockKey = `member:${memberUid}`;
+  if (state.updatingAccessKeys.has(lockKey)) return;
+
+  state.updatingAccessKeys.add(lockKey);
+  render();
+  try {
+    const callerEmail = (state.user?.email || "").trim().toLowerCase();
+    const resolvedInviteId =
+      String(inviteId || "").trim() ||
+      (memberEmail ? await buildInviteDocId(ownerId, memberEmail) : "");
+
+    const batch = writeBatch(db);
+    const memberRef = doc(db, "users", ownerId, "team_members", memberUid);
+    batch.update(memberRef, buildMemberRoleUpdatePayload(resolvedRole, serverTimestamp()));
+
+    if (resolvedInviteId) {
+      const inviteUpdate = buildInviteRoleUpdatePayload(resolvedRole, callerEmail, serverTimestamp());
+      const wsInvRef = doc(db, "users", ownerId, "team_invites", resolvedInviteId);
+      const rootInvRef = doc(db, "workspace_invites", resolvedInviteId);
+      const [wsSnap, rootSnap] = await Promise.all([
+        getDoc(wsInvRef).catch(() => null),
+        getDoc(rootInvRef).catch(() => null)
+      ]);
+      if (wsSnap?.exists()) {
+        batch.update(wsInvRef, inviteUpdate);
+      }
+      if (rootSnap?.exists()) {
+        batch.update(rootInvRef, inviteUpdate);
+      }
+    }
+
+    await batch.commit();
+    showToast(`Switched ${memberName || memberEmail || "member"} access to ${resolvedRole}.`);
+  } catch (err) {
+    showToast(err?.message || "Failed to update team member access.");
+  } finally {
+    state.updatingAccessKeys.delete(lockKey);
+    render();
+  }
+}
+
+async function switchPendingInviteRole({ inviteId, memberEmail, newRole }) {
+  const ownerId = state.activeWorkspaceOwnerId;
+  if (!ownerId || !inviteId) return;
+  const resolvedRole = resolveRole(newRole).label;
+  const lockKey = `invite:${inviteId}`;
+  if (state.updatingAccessKeys.has(lockKey)) return;
+
+  state.updatingAccessKeys.add(lockKey);
+  render();
+  try {
+    const callerEmail = (state.user?.email || "").trim().toLowerCase();
+    const inviteUpdate = buildInviteRoleUpdatePayload(resolvedRole, callerEmail, serverTimestamp());
+    const wsInvRef = doc(db, "users", ownerId, "team_invites", inviteId);
+    const rootInvRef = doc(db, "workspace_invites", inviteId);
+    const [wsSnap, rootSnap] = await Promise.all([
+      getDoc(wsInvRef).catch(() => null),
+      getDoc(rootInvRef).catch(() => null)
+    ]);
+
+    const batch = writeBatch(db);
+    let updatedCount = 0;
+    if (wsSnap?.exists()) {
+      batch.update(wsInvRef, inviteUpdate);
+      updatedCount++;
+    }
+    if (rootSnap?.exists()) {
+      batch.update(rootInvRef, inviteUpdate);
+      updatedCount++;
+    }
+    if (updatedCount > 0) {
+      await batch.commit();
+    }
+    showToast(`Switched invite for ${memberEmail || "teammate"} to ${resolvedRole}.`);
+  } catch (err) {
+    showToast(err?.message || "Failed to update invite access.");
+  } finally {
+    state.updatingAccessKeys.delete(lockKey);
+    render();
   }
 }
 
@@ -1120,10 +1210,40 @@ function renderReprocessTab() {
   `;
 }
 
+function renderRoleSwitcher({
+  currentRole,
+  targetType,
+  memberUid = "",
+  inviteId = "",
+  memberEmail = "",
+  memberName = "",
+  disabled = false
+}) {
+  const normalized = resolveRole(currentRole).label;
+  return `
+    <div class="role-switch" role="group" aria-label="Switch access for ${escapeHtml(memberName || memberEmail || "team member")}">
+      ${WORKSPACE_ROLE_OPTIONS.map((option) => {
+        const isActive = normalized === option;
+        const variantClass = option.toLowerCase();
+        const dataAttrs =
+          targetType === "member"
+            ? `data-switch-member-role="${option}" data-member-uid="${escapeHtml(memberUid)}" data-invite-id="${escapeHtml(inviteId)}" data-member-email="${escapeHtml(memberEmail)}" data-member-name="${escapeHtml(memberName)}"`
+            : `data-switch-invite-role="${option}" data-invite-id="${escapeHtml(inviteId)}" data-member-email="${escapeHtml(memberEmail)}"`;
+        return `<button type="button" class="role-chip ${isActive ? `active ${variantClass}` : ""}" ${dataAttrs} aria-pressed="${isActive ? "true" : "false"}" ${disabled ? "disabled" : ""}>${option}</button>`;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderTeamTab() {
   const role = getActiveRole();
   const pendingInvites = state.workspaceInvites.filter((i) => i.status === "Pending");
   const portalUrl = getWebOriginBase();
+  const ownerEmailDisplay =
+    state.activeWorkspaceOwnerId === state.user?.uid
+      ? state.user?.email
+      : state.workspaceInvites.find((i) => i.ownerEmail)?.ownerEmail || "Owner";
+
   return `
     <div class="card" style="display:grid; gap:10px;">
       <div class="section-head" style="margin-bottom:0;">
@@ -1143,31 +1263,52 @@ function renderTeamTab() {
         <h3>Team Members (${state.teamMembers.length + 1})</h3>
         ${role.canManageTeam ? `<button id="team-invite-btn" class="btn btn-primary btn-sm">Invite Team Member</button>` : ""}
       </div>
+      <div class="role-legend">
+        <span><strong>Viewer:</strong> Read-only dashboards &amp; CSV reports</span>
+        <span><strong>Operator:</strong> Log orders, dispatches, batches &amp; stock</span>
+        <span><strong>Admin:</strong> Full plant control &amp; switch team roles</span>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Member</th><th>Email</th><th>Access Level</th><th>Actions</th></tr></thead>
           <tbody>
             <tr>
               <td><strong>Workspace Owner</strong></td>
-              <td>${escapeHtml(state.activeWorkspaceOwnerId === state.user?.uid ? state.user?.email : "Owner")}</td>
+              <td>${escapeHtml(ownerEmailDisplay)}</td>
               <td>${statusPill("Admin")}</td>
               <td>Owner</td>
             </tr>
             ${state.teamMembers
-              .map(
-                (m) => `<tr>
-                  <td><strong>${escapeHtml(m.displayName || m.email)}</strong></td>
+              .map((m) => {
+                const canEditThisMember =
+                  role.canManageTeam &&
+                  m.userId !== state.user?.uid &&
+                  m.userId !== state.activeWorkspaceOwnerId;
+                const isUpdating = state.updatingAccessKeys.has(`member:${m.userId}`);
+                const roleCell = canEditThisMember
+                  ? renderRoleSwitcher({
+                      currentRole: m.role,
+                      targetType: "member",
+                      memberUid: m.userId,
+                      inviteId: m.inviteId || "",
+                      memberEmail: m.email || "",
+                      memberName: m.displayName || m.email || "",
+                      disabled: isUpdating
+                    })
+                  : statusPill(resolveRole(m.role).label);
+                return `<tr>
+                  <td><strong>${escapeHtml(m.displayName || m.email)}</strong>${m.userId === state.user?.uid ? ' <span style="font-size:11px;color:var(--muted)">(You)</span>' : ""}</td>
                   <td>${escapeHtml(m.email)}</td>
-                  <td>${statusPill(m.role)}</td>
+                  <td>${roleCell}</td>
                   <td>
                     ${
-                      role.canManageTeam && m.userId !== state.user?.uid
+                      canEditThisMember
                         ? `<button class="btn btn-danger btn-sm" data-remove-member="${escapeHtml(m.userId)}" data-invite-id="${escapeHtml(m.inviteId || "")}">Remove</button>`
                         : "—"
                     }
                   </td>
-                </tr>`
-              )
+                </tr>`;
+              })
               .join("")}
           </tbody>
         </table>
@@ -1178,12 +1319,23 @@ function renderTeamTab() {
       <div class="section-head"><h3>Pending Invitations (${pendingInvites.length})</h3></div>
       ${
         pendingInvites.length
-          ? `<div class="table-wrap"><table><thead><tr><th>Invited Email</th><th>Role</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>
+          ? `<div class="table-wrap"><table><thead><tr><th>Invited Email</th><th>Access Level</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>
               ${pendingInvites
-                .map(
-                  (inv) => `<tr>
+                .map((inv) => {
+                  const isUpdating = state.updatingAccessKeys.has(`invite:${inv.id}`);
+                  const roleCell = role.canManageTeam
+                    ? renderRoleSwitcher({
+                        currentRole: inv.role,
+                        targetType: "invite",
+                        inviteId: inv.id,
+                        memberEmail: inv.memberEmail || "",
+                        memberName: inv.memberDisplayName || inv.memberEmail || "",
+                        disabled: isUpdating
+                      })
+                    : statusPill(resolveRole(inv.role).label);
+                  return `<tr>
                     <td><strong>${escapeHtml(inv.memberEmail)}</strong></td>
-                    <td>${statusPill(inv.role)}</td>
+                    <td>${roleCell}</td>
                     <td>${escapeHtml(inv.emailDeliveryStatus || "Pending sign-in")}</td>
                     <td style="display:flex; gap:6px; flex-wrap:wrap;">
                       <button class="btn btn-sm" data-gmail-invite="${escapeHtml(inv.id)}">Open Gmail</button>
@@ -1194,8 +1346,8 @@ function renderTeamTab() {
                           : ""
                       }
                     </td>
-                  </tr>`
-                )
+                  </tr>`;
+                })
                 .join("")}
             </tbody></table></div>`
           : `<div class="empty-state">No pending team invitations.</div>`
@@ -1443,6 +1595,40 @@ function render() {
     };
   });
 
+  viewRoot.querySelectorAll("[data-switch-member-role]").forEach((btn) => {
+    btn.onclick = () => {
+      const targetRole = btn.dataset.switchMemberRole;
+      const memberUid = btn.dataset.memberUid;
+      const existing = state.teamMembers.find((m) => m.userId === memberUid);
+      if (existing && resolveRole(existing.role).label === resolveRole(targetRole).label) {
+        return;
+      }
+      switchMemberAccessRole({
+        memberUid,
+        inviteId: btn.dataset.inviteId || "",
+        memberEmail: btn.dataset.memberEmail || "",
+        memberName: btn.dataset.memberName || "",
+        newRole: targetRole
+      });
+    };
+  });
+
+  viewRoot.querySelectorAll("[data-switch-invite-role]").forEach((btn) => {
+    btn.onclick = () => {
+      const targetRole = btn.dataset.switchInviteRole;
+      const inviteId = btn.dataset.inviteId;
+      const existing = state.workspaceInvites.find((i) => i.id === inviteId);
+      if (existing && resolveRole(existing.role).label === resolveRole(targetRole).label) {
+        return;
+      }
+      switchPendingInviteRole({
+        inviteId,
+        memberEmail: btn.dataset.memberEmail || "",
+        newRole: targetRole
+      });
+    };
+  });
+
   viewRoot.querySelectorAll("[data-remove-member]").forEach((btn) => {
     btn.onclick = async () => {
       const memberUid = btn.dataset.removeMember;
@@ -1465,7 +1651,16 @@ document.getElementById("google-signin-btn").onclick = async () => {
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (err) {
-    errEl.textContent = err?.message || "Google Sign-In failed.";
+    const code = err?.code || "";
+    if (code === "auth/unauthorized-domain") {
+      const host = window.location.hostname || "localhost";
+      errEl.innerHTML =
+        `Domain <strong>${escapeHtml(host)}</strong> is not authorized yet in Firebase Auth. ` +
+        `Open <a href="https://console.firebase.google.com/project/${FIRESTORE_PROJECT_ID}/authentication/settings" target="_blank" rel="noopener">Firebase Authentication Settings</a> ` +
+        `→ <strong>Authorized domains</strong> → click <strong>Add domain</strong> → add <strong>${escapeHtml(host)}</strong>, then try Sign in again.`;
+    } else {
+      errEl.textContent = err?.message || "Google Sign-In failed.";
+    }
     errEl.classList.remove("hidden");
   }
 };

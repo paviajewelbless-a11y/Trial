@@ -46,6 +46,8 @@ export const WORKSPACE_ROLES = {
   }
 };
 
+export const WORKSPACE_ROLE_OPTIONS = ["Viewer", "Operator", "Admin"];
+
 export function resolveRole(raw) {
   const clean = String(raw || "").trim().toLowerCase();
   if (clean === "admin") return WORKSPACE_ROLES.Admin;
@@ -464,6 +466,25 @@ export function buildWorkspaceInvitePayload({
     createdAt: serverTimestampValue,
     updatedAt: serverTimestampValue
   };
+}
+
+export function buildMemberRoleUpdatePayload(role, serverTimestampValue) {
+  return {
+    role: resolveRole(role).label,
+    updatedAt: serverTimestampValue
+  };
+}
+
+export function buildInviteRoleUpdatePayload(role, invitedByEmail, serverTimestampValue) {
+  const payload = {
+    role: resolveRole(role).label,
+    updatedAt: serverTimestampValue
+  };
+  const cleanEmail = String(invitedByEmail || "").trim().toLowerCase().slice(0, 160);
+  if (cleanEmail) {
+    payload.invitedByEmail = cleanEmail;
+  }
+  return payload;
 }
 
 function escapeCsvCell(value) {

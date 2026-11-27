@@ -1,5 +1,5 @@
 param(
-  [int]$Port = 5000
+  [int]$Port = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +10,29 @@ if (-not (Test-Path $WebRoot)) {
   exit 1
 }
 
-$Listener = New-Object System.Net.HttpListener
-$Prefix = "http://localhost:$Port/"
-$Listener.Prefixes.Add($Prefix)
-$Listener.Start()
+$CandidatePorts = if ($Port -gt 0) { @($Port) } else { @(5173, 5500, 8123, 8456, 8765, 9095, 5050, 5000) }
+$Listener = $null
+$Prefix = ""
+
+foreach ($p in $CandidatePorts) {
+  $TryListener = New-Object System.Net.HttpListener
+  $TryPrefix = "http://localhost:$p/"
+  $TryListener.Prefixes.Add($TryPrefix)
+  try {
+    $TryListener.Start()
+    $Listener = $TryListener
+    $Prefix = $TryPrefix
+    break
+  } catch {
+    try { $TryListener.Close() } catch {}
+  }
+}
+
+if (-not $Listener) {
+  Write-Host "Could not bind any local port ($($CandidatePorts -join ', '))." -ForegroundColor Red
+  Read-Host "Press Enter to exit"
+  exit 1
+}
 
 Write-Host "FeedMill Ops Web Portal is running at $Prefix" -ForegroundColor Green
 Write-Host "Keep this window open while using Chrome. Press Ctrl+C to stop." -ForegroundColor Yellow

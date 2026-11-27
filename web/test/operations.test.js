@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import {
   FIRESTORE_DATABASE_ID,
   HOSTED_WEB_URL,
+  WORKSPACE_ROLE_OPTIONS,
   buildBatchCreatePayload,
   buildCsvReport,
   buildDispatchCreatePayload,
   buildGmailWebComposeUrl,
   buildInviteDocId,
   buildInviteEmailPayload,
+  buildInviteRoleUpdatePayload,
+  buildMemberRoleUpdatePayload,
   buildOrderCreatePayload,
   buildRawMaterialCreatePayload,
   buildScheduleCreatePayload,
@@ -160,4 +163,20 @@ test("Firestore create payload builders emit exact allowed schema keys", () => {
 test("buildCsvReport escapes commas and quotes properly", () => {
   const csv = buildCsvReport(["Name", "Notes"], [['Farm "Alpha", Inc.', "25kg"]]);
   assert.equal(csv, 'Name,Notes\n"Farm ""Alpha"", Inc.",25kg');
+});
+
+test("role update payload builders restrict keys to Firestore rules allowed fields", () => {
+  assert.deepEqual(WORKSPACE_ROLE_OPTIONS, ["Viewer", "Operator", "Admin"]);
+  const memberUpdate = buildMemberRoleUpdatePayload("operator", "SERVER_TS");
+  assert.deepEqual(memberUpdate, {
+    role: "Operator",
+    updatedAt: "SERVER_TS"
+  });
+
+  const inviteUpdate = buildInviteRoleUpdatePayload("admin", " Owner@10kfeeds.ph ", "SERVER_TS");
+  assert.deepEqual(inviteUpdate, {
+    role: "Admin",
+    invitedByEmail: "owner@10kfeeds.ph",
+    updatedAt: "SERVER_TS"
+  });
 });
