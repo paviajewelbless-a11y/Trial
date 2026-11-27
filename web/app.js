@@ -120,10 +120,25 @@ function formatNum(value, decimals = 1) {
   });
 }
 
+function isLocalOrigin() {
+  const host = (window.location.hostname || "").toLowerCase();
+  const protocol = (window.location.protocol || "").toLowerCase();
+  return protocol === "file:" || host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+function getCurrentPortalUrl() {
+  const origin = window.location.origin || "";
+  if (!origin || origin === "null") return HOSTED_WEB_URL;
+  const cleanPath = (window.location.pathname || "/")
+    .replace(/\/index\.html$/i, "")
+    .replace(/\/+$/, "");
+  return `${origin}${cleanPath}`;
+}
+
 function getWebOriginBase() {
   const origin = window.location.origin || "";
-  if (origin.startsWith("https://") && !origin.includes("localhost")) {
-    return origin;
+  if (origin.startsWith("https://") && !isLocalOrigin()) {
+    return getCurrentPortalUrl();
   }
   return HOSTED_WEB_URL;
 }
@@ -1238,6 +1253,8 @@ function renderRoleSwitcher({
 function renderTeamTab() {
   const role = getActiveRole();
   const pendingInvites = state.workspaceInvites.filter((i) => i.status === "Pending");
+  const isLocal = isLocalOrigin();
+  const currentUrl = getCurrentPortalUrl();
   const portalUrl = getWebOriginBase();
   const ownerEmailDisplay =
     state.activeWorkspaceOwnerId === state.user?.uid
@@ -1248,13 +1265,21 @@ function renderTeamTab() {
     <div class="card" style="display:grid; gap:10px;">
       <div class="section-head" style="margin-bottom:0;">
         <h3>Computer &amp; Web Portal Connection</h3>
-        <button id="copy-web-url-btn" class="btn btn-sm">Copy Website URL</button>
+        <button id="copy-web-url-btn" class="btn btn-sm">${isLocal ? "Copy Active Local URL" : "Copy Website URL"}</button>
       </div>
       <div style="font-size:13px; color:var(--muted); line-height:1.5;">
         This web app connects directly to Firebase project <strong>gen-lang-client-0293694787</strong> and the live Bulacan Plant Firestore database, syncing in real time with your Android app.
       </div>
-      <div style="font-size:12px; background:var(--surface-alt); border:1px solid var(--border); border-radius:10px; padding:10px 12px; word-break:break-all;">
-        Portal URL: <strong>${escapeHtml(portalUrl)}</strong>
+      <div style="font-size:12px; background:var(--surface-alt); border:1px solid var(--border); border-radius:10px; padding:10px 12px; word-break:break-all; display:grid; gap:6px;">
+        <div><strong>${isLocal ? "Active Local Portal URL:" : "Portal URL:"}</strong> <span>${escapeHtml(currentUrl)}</span></div>
+        ${
+          isLocal
+            ? `<div style="color:var(--muted); line-height:1.45;">
+                <strong>Public Hosting URL (once deployed):</strong> <strong>${escapeHtml(portalUrl)}</strong><br/>
+                If <strong>${escapeHtml(portalUrl)}</strong> shows <em>"Site Not Found"</em>, run <strong>deploy-web.bat</strong> once from your project folder (or run <code>firebase deploy --only hosting</code>) to publish the <code>web</code> folder online.
+              </div>`
+            : ""
+        }
       </div>
     </div>
 
@@ -1544,8 +1569,9 @@ function render() {
   const copyWebBtn = document.getElementById("copy-web-url-btn");
   if (copyWebBtn) {
     copyWebBtn.onclick = async () => {
-      await navigator.clipboard.writeText(getWebOriginBase());
-      showToast("Website URL copied to clipboard.");
+      const urlToCopy = getCurrentPortalUrl();
+      await navigator.clipboard.writeText(urlToCopy);
+      showToast(`Copied URL: ${urlToCopy}`);
     };
   }
   const teamInviteBtn = document.getElementById("team-invite-btn");

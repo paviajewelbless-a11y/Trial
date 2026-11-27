@@ -10,7 +10,7 @@ if (-not (Test-Path $WebRoot)) {
   exit 1
 }
 
-$CandidatePorts = if ($Port -gt 0) { @($Port) } else { @(5173, 5500, 8123, 8456, 8765, 9095, 5050, 5000) }
+$CandidatePorts = if ($Port -gt 0) { @($Port) } else { @(8123, 5173, 5500, 8456, 8765, 9095, 5050) }
 $Listener = $null
 $Prefix = ""
 
