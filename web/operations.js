@@ -730,6 +730,7 @@ export function buildPlantReport({
     const rec = sb.reduce((sum, b) => sum + Number(b.actualRecoveredKg || 0), 0);
     return {
       section: sec,
+      batches: sb,
       totalBags: sb.reduce((sum, b) => sum + Number(b.bagsProduced || 0), 0),
       totalExpectedKg: exp,
       totalRecoveredKg: rec,
@@ -747,6 +748,9 @@ export function buildPlantReport({
 
   const totalExpectedKg = filteredBatches.reduce((sum, b) => sum + Number(b.expectedWeightKg || 0), 0);
   const totalRecoveredKg = filteredBatches.reduce((sum, b) => sum + Number(b.actualRecoveredKg || 0), 0);
+  const activeSchedules = filteredSchedules.filter((s) => s.status === "Scheduled" || s.status === "In Progress");
+  const scheduledQueueBags = activeSchedules.reduce((sum, s) => sum + Number(s.targetBags || 0), 0);
+  const scheduledCompletedCount = filteredSchedules.filter((s) => s.status === "Completed").length;
 
   return {
     startDate: sDate,
@@ -768,6 +772,9 @@ export function buildPlantReport({
     totalOpenOrdersKg: activeOpenOrders.reduce((sum, o) => sum + Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0)), 0),
     totalAvailableStockKg: sectionSummaries.reduce((sum, s) => sum + s.totalAvailableStockKg, 0),
     totalAvailableBags: sectionSummaries.reduce((sum, s) => sum + s.totalAvailableBags, 0),
+    scheduledActiveCount: activeSchedules.length,
+    scheduledQueueBags,
+    scheduledCompletedCount,
     deliveredCount: filteredDispatches.filter((d) => resolvedDispatchStatus(d) === "Delivered").length,
     returnedCount: filteredDispatches.filter((d) => resolvedDispatchStatus(d) === "Returned").length,
     heldCount: filteredDispatches.filter((d) => resolvedDispatchStatus(d) === "Held").length
@@ -777,14 +784,17 @@ export function buildPlantReport({
 export function buildMessengerSummaryText(report) {
   const period = report.isDailyReport ? `Daily (${report.startDate})` : `${report.startDate} to ${report.endDate}`;
   const inc = new Set(report.includedSections);
+  const scopeLabel = report.includedSections.length === REPORT_SECTION_OPTIONS.length
+    ? "All Sections"
+    : report.includedSections.join(", ");
   const lines = [
     "*10K AGRI FEEDS - BULACAN PLANT*",
     `*${report.isDailyReport ? "DAILY" : "PERIOD"} PLANT SUMMARY REPORT*`,
-    `Period: ${period} | Plant: ${report.sectionFilter}`,
+    `Period: ${period} | Plant: ${report.sectionFilter} | Scope: ${scopeLabel}`,
     "=============================="
   ];
   if (inc.has("Inventory")) {
-    lines.push(`Available Stock: ${report.totalAvailableStockKg.toFixed(0)} kg (${report.totalAvailableBags.toFixed(1)} bags)`);
+    lines.push(`Available Stock: ${report.totalAvailableStockKg.toFixed(0)} kg (${report.totalAvailableBags.toFixed(1)} bags) across ${report.filteredSummaries.length} SKUs`);
   }
   if (inc.has("Recovery")) {
     lines.push(`Produced: ${report.totalProducedBags} bags | ${report.totalRecoveredKg.toFixed(0)} kg (${report.avgRecoveryPct.toFixed(2)}% recovery)`);
@@ -793,15 +803,38 @@ export function buildMessengerSummaryText(report) {
     lines.push(`Dispatched: ${report.totalDispatchedKg.toFixed(0)} kg net (${report.filteredDispatches.length} trips: ${report.deliveredCount} Del, ${report.returnedCount} Ret, ${report.heldCount} Held)`);
   }
   if (inc.has("Orders")) {
-    lines.push(`Active Open Orders: ${report.activeOpenOrders.length} (${report.totalOpenOrdersKg.toFixed(0)} kg remaining)`);
+    lines.push(`Orders in Period: ${report.filteredOrders.length} | Active Open Orders: ${report.activeOpenOrders.length} (${report.totalOpenOrdersKg.toFixed(0)} kg remaining)`);
   }
   if (inc.has("Schedule")) {
-    lines.push(`Scheduled Runs in Period: ${report.filteredSchedules.length}`);
+    lines.push(`Scheduled Runs in Period: ${report.filteredSchedules.length} (${report.scheduledActiveCount || 0} active / ${report.scheduledQueueBags || 0} bags, ${report.scheduledCompletedCount || 0} completed)`);
   }
-  if (report.sectionSummaries?.length) {
+  if ((inc.has("Inventory") || inc.has("Recovery")) && report.sectionSummaries?.length) {
     lines.push("", "*By Plant Section:*");
     for (const s of report.sectionSummaries) {
-      lines.push(`• ${s.section}: Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg) | Prod ${s.totalBags} b (${s.recoveryPct.toFixed(1)}%)`);
+      const parts = [];
+      if (inc.has("Inventory")) parts.push(`Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg)`);
+      if (inc.has("Recovery")) parts.push(`Prod ${s.totalBags} b (${s.recoveryPct.toFixed(1)}%)`);
+      lines.push(`• ${s.section}: ${parts.join(" | ")}`);
+    }
+  }
+  if (inc.has("Dispatches") && report.filteredDispatches.length) {
+    lines.push("", "*Dispatches:*");
+    for (const d of report.filteredDispatches.slice(0, 8)) {
+      lines.push(`• ${d.date} | ${d.drReference} | ${d.customer} | ${effectiveDispatchWeightKg(d).toFixed(0)} kg [${resolvedDispatchStatus(d)}]`);
+    }
+  }
+  if (inc.has("Orders") && (report.filteredOrders.length || report.activeOpenOrders.length)) {
+    lines.push("", "*Orders:*");
+    const list = report.filteredOrders.length ? report.filteredOrders : report.activeOpenOrders;
+    for (const o of list.slice(0, 8)) {
+      const rem = Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0));
+      lines.push(`• ${o.orderCode} | ${o.customer} | ${o.productName} | Rem ${rem.toFixed(0)} kg [${o.status}]`);
+    }
+  }
+  if (inc.has("Schedule") && report.filteredSchedules.length) {
+    lines.push("", "*Schedule Runs:*");
+    for (const sch of report.filteredSchedules.slice(0, 8)) {
+      lines.push(`• ${sch.scheduledDate} | ${sch.section} | ${sch.productName} (${sch.targetBags}b) [${sch.status}]`);
     }
   }
   return lines.join("\n");
@@ -810,14 +843,17 @@ export function buildMessengerSummaryText(report) {
 export function buildDetailedEmailReportText(report) {
   const period = report.isDailyReport ? `Daily (${report.startDate})` : `${report.startDate} to ${report.endDate}`;
   const inc = new Set(report.includedSections);
+  const scopeLabel = report.includedSections.length === REPORT_SECTION_OPTIONS.length
+    ? "All Sections"
+    : report.includedSections.join(", ");
   const lines = [
     "10K AGRI FEEDS - BULACAN PLANT OPERATIONS REPORT",
     `Period: ${period}`,
-    `Plant Filter: ${report.sectionFilter}`,
+    `Plant Filter: ${report.sectionFilter} | Included Sections: ${scopeLabel}`,
     "------------------------------------------------------------"
   ];
   if (inc.has("Inventory")) {
-    lines.push(`Finished Stock Available: ${report.totalAvailableStockKg.toFixed(0)} kg (${report.totalAvailableBags.toFixed(1)} bags)`);
+    lines.push(`Finished Stock Available: ${report.totalAvailableStockKg.toFixed(0)} kg (${report.totalAvailableBags.toFixed(1)} bags across ${report.filteredSummaries.length} SKUs)`);
   }
   if (inc.has("Recovery")) {
     lines.push(`Production Batches: ${report.filteredBatches.length} runs | ${report.totalProducedBags} bags | ${report.totalRecoveredKg.toFixed(0)} kg (${report.avgRecoveryPct.toFixed(2)}% recovery)`);
@@ -826,36 +862,194 @@ export function buildDetailedEmailReportText(report) {
     lines.push(`Dispatched Deliveries: ${report.filteredDispatches.length} trips | ${report.totalDispatchedKg.toFixed(0)} kg net (${report.deliveredCount} Delivered, ${report.returnedCount} Returned, ${report.heldCount} Held)`);
   }
   if (inc.has("Orders")) {
-    lines.push(`Active Open Orders: ${report.activeOpenOrders.length} orders (${report.totalOpenOrdersKg.toFixed(0)} kg remaining)`);
+    lines.push(`Orders in Period: ${report.filteredOrders.length} | Active Open Orders: ${report.activeOpenOrders.length} orders (${report.totalOpenOrdersKg.toFixed(0)} kg remaining)`);
   }
   if (inc.has("Schedule")) {
-    lines.push(`Scheduled Runs: ${report.filteredSchedules.length}`);
+    lines.push(`Scheduled Runs: ${report.filteredSchedules.length} (${report.scheduledActiveCount || 0} active / ${report.scheduledQueueBags || 0} bags, ${report.scheduledCompletedCount || 0} completed)`);
   }
 
-  if (report.sectionSummaries?.length) {
+  if ((inc.has("Inventory") || inc.has("Recovery")) && report.sectionSummaries?.length) {
     lines.push("", "PLANT SECTION BREAKDOWN:");
     for (const s of report.sectionSummaries) {
-      lines.push(`- ${s.section}: ${s.skuCount} SKUs | Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg) | Produced ${s.totalBags} b (${s.totalRecoveredKg.toFixed(0)} kg, ${s.recoveryPct.toFixed(1)}%)`);
+      const parts = [];
+      if (inc.has("Inventory")) parts.push(`Avail ${s.totalAvailableBags.toFixed(1)} b (${s.totalAvailableStockKg.toFixed(0)} kg)`);
+      if (inc.has("Recovery")) parts.push(`Produced ${s.totalBags} b (${s.totalRecoveredKg.toFixed(0)} kg, ${s.recoveryPct.toFixed(1)}%)`);
+      lines.push(`- ${s.section} (${s.skuCount} SKUs): ${parts.join(" | ")}`);
+    }
+  }
+
+  if (inc.has("Inventory") && report.filteredSummaries.length) {
+    lines.push("", "INVENTORY SKU BALANCE:");
+    for (const row of report.filteredSummaries.slice(0, 30)) {
+      lines.push(`- [${row.sku.section}] ${row.sku.productName}: Avail ${row.availableBags.toFixed(1)} b (${row.availableStockKg.toFixed(0)} kg) | OpenOrd ${row.openOrdersKg.toFixed(0)} kg | ${row.status}`);
+    }
+  }
+
+  if (inc.has("Recovery") && report.filteredBatches.length) {
+    lines.push("", "PRODUCTION RECOVERY BATCHES:");
+    for (const b of report.filteredBatches.slice(0, 25)) {
+      lines.push(`- ${b.date} | ${b.section} | ${b.productName} | ${b.bagsProduced} b | Rec ${Number(b.actualRecoveredKg || 0).toFixed(0)} kg (${Number(b.recoveryPct || 100).toFixed(1)}%)`);
     }
   }
 
   if (inc.has("Dispatches") && report.filteredDispatches.length) {
-    lines.push("", "RECENT DISPATCHES IN PERIOD:");
-    for (const d of report.filteredDispatches.slice(0, 15)) {
+    lines.push("", "DISPATCHES IN PERIOD:");
+    for (const d of report.filteredDispatches.slice(0, 25)) {
       lines.push(`- ${d.date} | ${d.drReference} | ${d.customer} | ${d.productName} | ${d.bagsDispatched} bags (${effectiveDispatchWeightKg(d).toFixed(0)} kg net) | ${resolvedDispatchStatus(d)}`);
     }
   }
 
-  if (inc.has("Orders") && report.activeOpenOrders.length) {
-    lines.push("", "ACTIVE OPEN ORDERS:");
-    for (const o of report.activeOpenOrders.slice(0, 15)) {
-      const rem = Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0));
-      lines.push(`- ${o.orderCode} | ${o.customer} | ${o.productName} | ${rem.toFixed(0)} kg left | Due ${o.dueDate} | ${o.status}`);
+  if (inc.has("Schedule") && report.filteredSchedules.length) {
+    lines.push("", "SCHEDULED MILLING RUNS:");
+    for (const sch of report.filteredSchedules.slice(0, 25)) {
+      lines.push(`- ${sch.scheduledDate} | ${sch.section} | ${sch.productName} | ${sch.targetBags} bags (${Number(sch.expectedWeightKg || 0).toFixed(0)} kg) | ${sch.priority} | ${sch.status}`);
+    }
+  }
+
+  if (inc.has("Orders") && (report.filteredOrders.length || report.activeOpenOrders.length)) {
+    if (report.filteredOrders.length) {
+      lines.push("", "ORDERS IN PERIOD:");
+      for (const o of report.filteredOrders.slice(0, 25)) {
+        lines.push(`- ${o.orderCode} | ${o.customer} | ${o.productName} | ${o.orderedBags} b (${Number(o.totalWeightKg || 0).toFixed(0)} kg) | Due ${o.dueDate} | ${o.status}`);
+      }
+    }
+    if (report.activeOpenOrders.length) {
+      lines.push("", "ACTIVE OPEN ORDERS:");
+      for (const o of report.activeOpenOrders.slice(0, 25)) {
+        const rem = Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0));
+        lines.push(`- ${o.orderCode} | ${o.customer} | ${o.productName} | ${rem.toFixed(0)} kg left | Due ${o.dueDate} | ${o.status}`);
+      }
     }
   }
 
   lines.push("", "Generated from FeedMill Ops Web Portal.");
   return lines.join("\n");
+}
+
+export function buildPlantReportCsv(report) {
+  const inc = new Set(report.includedSections);
+  const rows = [];
+  const pushHeader = (cols) => rows.push(cols);
+
+  pushHeader(["10K AGRI FEEDS - BULACAN PLANT REPORT", report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`, `Plant: ${report.sectionFilter}`, `Scope: ${report.includedSections.join(", ")}`]);
+  rows.push([]);
+
+  if (inc.has("Inventory") || inc.has("Recovery")) {
+    pushHeader(["PLANT SECTION SUMMARY"]);
+    pushHeader(["Plant Section", "SKUs", "Available Bags", "Available Kg", "Produced Bags", "Recovered Kg", "Recovery %"]);
+    for (const s of report.sectionSummaries) {
+      rows.push([
+        s.section,
+        s.skuCount,
+        s.totalAvailableBags.toFixed(1),
+        s.totalAvailableStockKg.toFixed(1),
+        s.totalBags,
+        s.totalRecoveredKg.toFixed(1),
+        s.recoveryPct.toFixed(2)
+      ]);
+    }
+    rows.push([]);
+  }
+
+  if (inc.has("Inventory")) {
+    pushHeader(["INVENTORY SKU DETAILS"]);
+    pushHeader(["Product", "Section", "Available Bags", "Available Kg", "Produced Kg", "Dispatched Kg", "Open Orders Kg", "Need to Mill Kg", "Status"]);
+    for (const r of report.filteredSummaries) {
+      rows.push([
+        r.sku.productName,
+        r.sku.section,
+        r.availableBags.toFixed(1),
+        r.availableStockKg.toFixed(1),
+        r.recoveredKg.toFixed(1),
+        r.dispatchedKg.toFixed(1),
+        r.openOrdersKg.toFixed(1),
+        r.netProductionNeededKg.toFixed(1),
+        r.status
+      ]);
+    }
+    rows.push([]);
+  }
+
+  if (inc.has("Orders")) {
+    pushHeader(["CUSTOMER ORDERS IN PERIOD"]);
+    pushHeader(["Order Code", "Order Date", "Due Date", "Customer", "Product", "Ordered Bags", "Total Kg", "Dispatched Kg", "Remaining Kg", "Status"]);
+    const orderRows = report.filteredOrders.length ? report.filteredOrders : report.activeOpenOrders;
+    for (const o of orderRows) {
+      const rem = Math.max(0, Number(o.totalWeightKg || 0) - Number(o.dispatchedWeightKg || 0));
+      rows.push([
+        o.orderCode,
+        o.orderDate || "",
+        o.dueDate || "",
+        o.customer,
+        o.productName,
+        o.orderedBags,
+        Number(o.totalWeightKg || 0).toFixed(1),
+        Number(o.dispatchedWeightKg || 0).toFixed(1),
+        rem.toFixed(1),
+        o.status
+      ]);
+    }
+    rows.push([]);
+  }
+
+  if (inc.has("Schedule")) {
+    pushHeader(["SCHEDULED PRODUCTION RUNS"]);
+    pushHeader(["Scheduled Date", "Section", "Product", "Target Bags", "Expected Kg", "Priority", "Linked Order", "Status", "Remarks"]);
+    for (const sch of report.filteredSchedules) {
+      rows.push([
+        sch.scheduledDate,
+        sch.section,
+        sch.productName,
+        sch.targetBags,
+        Number(sch.expectedWeightKg || 0).toFixed(1),
+        sch.priority,
+        sch.linkedOrderCode || "",
+        sch.status,
+        sch.lineRemarks || ""
+      ]);
+    }
+    rows.push([]);
+  }
+
+  if (inc.has("Dispatches")) {
+    pushHeader(["DISPATCHES IN PERIOD"]);
+    pushHeader(["Date", "DR Reference", "Customer", "Product", "Source Plant", "Bags", "Net Weight Kg", "Driver", "Truck", "Status"]);
+    for (const d of report.filteredDispatches) {
+      rows.push([
+        d.date,
+        d.drReference,
+        d.customer,
+        d.productName,
+        d.sourcePlant || "",
+        d.bagsDispatched,
+        effectiveDispatchWeightKg(d).toFixed(1),
+        d.driverName || "",
+        d.truckNumber || "",
+        resolvedDispatchStatus(d)
+      ]);
+    }
+    rows.push([]);
+  }
+
+  if (inc.has("Recovery")) {
+    pushHeader(["PRODUCTION RECOVERY BATCHES"]);
+    pushHeader(["Date", "Section", "Product", "Bags", "Expected Kg", "Recovered Kg", "Recovery %", "Remarks"]);
+    for (const b of report.filteredBatches) {
+      rows.push([
+        b.date,
+        b.section,
+        b.productName,
+        b.bagsProduced,
+        Number(b.expectedWeightKg || 0).toFixed(1),
+        Number(b.actualRecoveredKg || 0).toFixed(1),
+        Number(b.recoveryPct || 100).toFixed(2),
+        b.remarks || ""
+      ]);
+    }
+    rows.push([]);
+  }
+
+  return rows.map((row) => row.map((cell) => escapeCsvCell(cell)).join(",")).join("\n");
 }
 
 export function buildDailyLogMessengerText(dayLog, sectionFilter = "ALL") {

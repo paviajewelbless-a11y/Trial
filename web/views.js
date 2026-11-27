@@ -1036,12 +1036,275 @@ export function renderReportsTab(state, summaries, activeRole) {
     summaries
   });
 
+  const inc = new Set(report.includedSections);
+  const allSelected = REPORT_SECTION_OPTIONS.every((o) => inc.has(o));
+  const scopeLabel = allSelected ? "All Sections" : report.includedSections.join(", ");
+
+  const kpiCards = [];
+  if (inc.has("Inventory")) {
+    kpiCards.push(`
+      <div class="card kpi-card">
+        <div class="kpi-label">Available Stock</div>
+        <div class="kpi-value">${formatNum(report.totalAvailableStockKg, 0)} kg</div>
+        <div class="kpi-sub">${formatNum(report.totalAvailableBags, 1)} bags across ${report.filteredSummaries.length} SKUs</div>
+      </div>
+    `);
+  }
+  if (inc.has("Orders")) {
+    kpiCards.push(`
+      <div class="card kpi-card">
+        <div class="kpi-label">Customer Orders</div>
+        <div class="kpi-value">${report.activeOpenOrders.length} open</div>
+        <div class="kpi-sub">${report.filteredOrders.length} in period • ${formatNum(report.totalOpenOrdersKg, 0)} kg remaining</div>
+      </div>
+    `);
+  }
+  if (inc.has("Schedule")) {
+    kpiCards.push(`
+      <div class="card kpi-card">
+        <div class="kpi-label">Scheduled Runs</div>
+        <div class="kpi-value">${report.filteredSchedules.length}</div>
+        <div class="kpi-sub">${report.scheduledActiveCount || 0} active (${report.scheduledQueueBags || 0} bags) • ${report.scheduledCompletedCount || 0} done</div>
+      </div>
+    `);
+  }
+  if (inc.has("Dispatches")) {
+    kpiCards.push(`
+      <div class="card kpi-card">
+        <div class="kpi-label">Dispatched in Period</div>
+        <div class="kpi-value">${formatNum(report.totalDispatchedKg, 0)} kg</div>
+        <div class="kpi-sub">${report.filteredDispatches.length} trips (${report.deliveredCount} Del, ${report.returnedCount} Ret, ${report.heldCount} Held)</div>
+      </div>
+    `);
+  }
+  if (inc.has("Recovery")) {
+    kpiCards.push(`
+      <div class="card kpi-card">
+        <div class="kpi-label">Produced in Period</div>
+        <div class="kpi-value">${report.totalProducedBags} b</div>
+        <div class="kpi-sub">${formatNum(report.totalRecoveredKg, 0)} kg (${formatNum(report.avgRecoveryPct, 2)}% rec)</div>
+      </div>
+    `);
+  }
+
+  const sectionSummaryBlock =
+    inc.has("Inventory") || inc.has("Recovery")
+      ? `
+        <div style="display:grid; gap:6px;">
+          <h4 style="margin:0; font-size:14px;">Plant Section Overview</h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Plant Section</th>
+                  <th>SKUs</th>
+                  ${inc.has("Inventory") ? `<th>Available Stock</th>` : ""}
+                  ${inc.has("Recovery") ? `<th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th>` : ""}
+                </tr>
+              </thead>
+              <tbody>
+                ${report.sectionSummaries
+                  .map(
+                    (s) => `<tr>
+                      <td><strong>${escapeHtml(s.section)}</strong></td>
+                      <td>${s.skuCount}</td>
+                      ${inc.has("Inventory") ? `<td>${formatNum(s.totalAvailableBags, 1)} b (${formatNum(s.totalAvailableStockKg, 0)} kg)</td>` : ""}
+                      ${inc.has("Recovery") ? `<td>${s.totalBags}</td><td>${formatNum(s.totalRecoveredKg, 0)} kg</td><td>${formatNum(s.recoveryPct, 2)}%</td>` : ""}
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `
+      : "";
+
+  const inventoryDetailsBlock = inc.has("Inventory")
+    ? `
+      <div class="card" style="display:grid; gap:10px;">
+        <div class="section-head" style="margin-bottom:0;">
+          <h3>Inventory Stock Breakdown (${report.filteredSummaries.length} SKUs)</h3>
+          <span class="pill pill-neutral">${escapeHtml(report.sectionFilter)}</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Product</th><th>Plant</th><th>Available</th><th>Produced</th><th>Dispatched</th><th>Open Orders</th><th>Status</th></tr></thead>
+            <tbody>
+              ${
+                report.filteredSummaries.length
+                  ? report.filteredSummaries
+                      .map(
+                        (r) => `<tr>
+                          <td><strong>${escapeHtml(r.sku.productName)}</strong></td>
+                          <td>${escapeHtml(r.sku.section)}</td>
+                          <td><strong>${formatNum(r.availableBags, 1)} b</strong> (${formatNum(r.availableStockKg, 0)} kg)</td>
+                          <td>${formatNum(r.recoveredKg, 0)} kg</td>
+                          <td>${formatNum(r.dispatchedKg, 0)} kg</td>
+                          <td>${formatNum(r.openOrdersKg, 0)} kg</td>
+                          <td>${statusPill(r.status)}</td>
+                        </tr>`
+                      )
+                      .join("")
+                  : `<tr><td colspan="7" class="empty-state">No SKUs found for this filter.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : "";
+
+  const ordersDetailsBlock = inc.has("Orders")
+    ? `
+      <div class="card" style="display:grid; gap:10px;">
+        <div class="section-head" style="margin-bottom:0;">
+          <h3>Customer Orders • Period (${report.filteredOrders.length}) &amp; Active Open (${report.activeOpenOrders.length})</h3>
+          <span class="pill pill-neutral">${formatNum(report.totalOpenOrdersKg, 0)} kg open remaining</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Dispatched / Total</th><th>Order Date</th><th>Due Date</th><th>Status</th></tr></thead>
+            <tbody>
+              ${
+                report.filteredOrders.length || report.activeOpenOrders.length
+                  ? [
+                      ...report.filteredOrders,
+                      ...report.activeOpenOrders.filter((ao) => !report.filteredOrders.some((fo) => fo.id === ao.id))
+                    ]
+                      .map(
+                        (o) => `<tr>
+                          <td><strong>${escapeHtml(o.orderCode)}</strong>${o.rushOrder ? ' <span class="pill pill-critical">RUSH</span>' : o.priority ? ' <span class="pill pill-warn">PRIORITY</span>' : ""}</td>
+                          <td>${escapeHtml(o.customer)}</td>
+                          <td>${escapeHtml(o.productName)} (${o.orderedBags} b)</td>
+                          <td>${formatNum(o.dispatchedWeightKg, 0)} / ${formatNum(o.totalWeightKg, 0)} kg</td>
+                          <td>${escapeHtml(o.orderDate || "—")}</td>
+                          <td>${escapeHtml(o.dueDate || "—")}</td>
+                          <td>${statusPill(o.status)}</td>
+                        </tr>`
+                      )
+                      .join("")
+                  : `<tr><td colspan="7" class="empty-state">No customer orders in selected period or active queue.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : "";
+
+  const scheduleDetailsBlock = inc.has("Schedule")
+    ? `
+      <div class="card" style="display:grid; gap:10px;">
+        <div class="section-head" style="margin-bottom:0;">
+          <h3>Production Schedule Runs (${report.filteredSchedules.length})</h3>
+          <span class="pill pill-neutral">${report.scheduledQueueBags || 0} bags queued</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Scheduled Date</th><th>Section</th><th>Product</th><th>Target</th><th>Priority</th><th>Linked Order</th><th>Status</th></tr></thead>
+            <tbody>
+              ${
+                report.filteredSchedules.length
+                  ? report.filteredSchedules
+                      .map(
+                        (s) => `<tr>
+                          <td>${escapeHtml(s.scheduledDate)}</td>
+                          <td>${escapeHtml(s.section)}</td>
+                          <td><strong>${escapeHtml(s.productName)}</strong><div style="font-size:11px;color:var(--muted)">${escapeHtml(s.lineRemarks || "")}</div></td>
+                          <td>${s.targetBags} b (${formatNum(s.expectedWeightKg, 0)} kg)</td>
+                          <td>${statusPill(s.priority)}</td>
+                          <td>${escapeHtml(s.linkedOrderCode || "Stock Build")}</td>
+                          <td>${statusPill(s.status)}</td>
+                        </tr>`
+                      )
+                      .join("")
+                  : `<tr><td colspan="7" class="empty-state">No scheduled production runs in selected period.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : "";
+
+  const dispatchesDetailsBlock = inc.has("Dispatches")
+    ? `
+      <div class="card" style="display:grid; gap:10px;">
+        <div class="section-head" style="margin-bottom:0;">
+          <h3>Dispatches &amp; Fleet Trips (${report.filteredDispatches.length})</h3>
+          <span class="pill pill-neutral">${formatNum(report.totalDispatchedKg, 0)} kg net</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>DR Ref</th><th>Customer</th><th>Product &amp; Fleet</th><th>Bags</th><th>Net Weight</th><th>Status</th></tr></thead>
+            <tbody>
+              ${
+                report.filteredDispatches.length
+                  ? report.filteredDispatches
+                      .map((d) => {
+                        const fleet = [d.driverName, d.truckNumber].filter(Boolean).join(" / ");
+                        return `<tr>
+                          <td>${escapeHtml(d.date)}</td>
+                          <td><strong>${escapeHtml(d.drReference)}</strong></td>
+                          <td>${escapeHtml(d.customer)}</td>
+                          <td><strong>${escapeHtml(d.productName)}</strong>${fleet ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(fleet)}</div>` : ""}</td>
+                          <td>${d.bagsDispatched} b</td>
+                          <td>${formatNum(effectiveDispatchWeightKg(d), 0)} kg${d.returnConfirmed ? `<div style="font-size:11px;color:var(--critical)">Ret: ${d.returnedBags} b</div>` : ""}</td>
+                          <td>${statusPill(resolvedDispatchStatus(d))}</td>
+                        </tr>`;
+                      })
+                      .join("")
+                  : `<tr><td colspan="7" class="empty-state">No dispatches logged in selected period.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : "";
+
+  const recoveryDetailsBlock = inc.has("Recovery")
+    ? `
+      <div class="card" style="display:grid; gap:10px;">
+        <div class="section-head" style="margin-bottom:0;">
+          <h3>Production Recovery Batches (${report.filteredBatches.length})</h3>
+          <span class="pill pill-neutral">${report.totalProducedBags} bags • ${formatNum(report.avgRecoveryPct, 2)}% avg</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Section</th><th>Product</th><th>Bags</th><th>Expected / Recovered</th><th>Recovery %</th><th>Remarks</th></tr></thead>
+            <tbody>
+              ${
+                report.filteredBatches.length
+                  ? report.filteredBatches
+                      .map(
+                        (b) => `<tr>
+                          <td>${escapeHtml(b.date)}</td>
+                          <td>${escapeHtml(b.section)}</td>
+                          <td><strong>${escapeHtml(b.productName)}</strong></td>
+                          <td>${b.bagsProduced}</td>
+                          <td>${formatNum(b.expectedWeightKg, 0)} / ${formatNum(b.actualRecoveredKg, 0)} kg</td>
+                          <td>${statusPill(Number(b.recoveryPct || 100) < 97 ? "Critical" : Number(b.recoveryPct || 100) < 98.5 ? "Low Watch" : "Healthy")} ${formatNum(b.recoveryPct, 2)}%</td>
+                          <td>${escapeHtml(b.remarks || "—")}</td>
+                        </tr>`
+                      )
+                      .join("")
+                  : `<tr><td colspan="7" class="empty-state">No production batches logged in selected period.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : "";
+
   return `
     <div class="card" style="display:grid; gap:12px;">
       <div class="section-head" style="margin-bottom:0;">
         <div>
           <h3>Bulacan Plant Reports &amp; Exports</h3>
-          <div style="font-size:12px; color:var(--muted);">Period: ${report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`} • Plant: ${escapeHtml(report.sectionFilter)}</div>
+          <div style="font-size:12px; color:var(--muted);">Period: ${report.isDailyReport ? report.startDate : `${report.startDate} to ${report.endDate}`} • Plant: ${escapeHtml(report.sectionFilter)} • Showing: <strong>${escapeHtml(scopeLabel)}</strong></div>
         </div>
         <div class="action-cell no-print">
           <button id="report-send-messenger-btn" class="btn btn-messenger btn-sm">Send to Messenger</button>
@@ -1074,39 +1337,23 @@ export function renderReportsTab(state, summaries, activeRole) {
 
       <div class="chip-row no-print">
         <span style="font-size:12px; font-weight:700; color:var(--muted);">Include Sections:</span>
+        <button type="button" class="chip ${allSelected ? "active" : ""}" id="report-all-sections-btn">All Sections</button>
         ${REPORT_SECTION_OPTIONS.map((opt) => {
           const checked = state.reportIncludedSections.includes(opt);
           return `<button type="button" class="chip ${checked ? "active" : ""}" data-toggle-report-section="${opt}">${opt}</button>`;
         }).join("")}
       </div>
 
-      <div class="kpi-grid">
-        <div class="card kpi-card"><div class="kpi-label">Available Stock</div><div class="kpi-value">${formatNum(report.totalAvailableStockKg, 0)} kg</div><div class="kpi-sub">${formatNum(report.totalAvailableBags, 1)} bags</div></div>
-        <div class="card kpi-card"><div class="kpi-label">Produced in Period</div><div class="kpi-value">${report.totalProducedBags} b</div><div class="kpi-sub">${formatNum(report.totalRecoveredKg, 0)} kg (${formatNum(report.avgRecoveryPct, 2)}% rec)</div></div>
-        <div class="card kpi-card"><div class="kpi-label">Dispatched in Period</div><div class="kpi-value">${formatNum(report.totalDispatchedKg, 0)} kg</div><div class="kpi-sub">${report.filteredDispatches.length} trips (${report.deliveredCount} Del, ${report.returnedCount} Ret, ${report.heldCount} Held)</div></div>
-        <div class="card kpi-card"><div class="kpi-label">Active Open Orders</div><div class="kpi-value">${report.activeOpenOrders.length}</div><div class="kpi-sub">${formatNum(report.totalOpenOrdersKg, 0)} kg remaining</div></div>
-      </div>
+      <div class="kpi-grid">${kpiCards.join("")}</div>
 
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Plant Section</th><th>SKUs</th><th>Available Stock</th><th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th></tr></thead>
-          <tbody>
-            ${report.sectionSummaries
-              .map(
-                (s) => `<tr>
-                  <td><strong>${escapeHtml(s.section)}</strong></td>
-                  <td>${s.skuCount}</td>
-                  <td>${formatNum(s.totalAvailableBags, 1)} b (${formatNum(s.totalAvailableStockKg, 0)} kg)</td>
-                  <td>${s.totalBags}</td>
-                  <td>${formatNum(s.totalRecoveredKg, 0)} kg</td>
-                  <td>${formatNum(s.recoveryPct, 2)}%</td>
-                </tr>`
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
+      ${sectionSummaryBlock}
     </div>
+
+    ${inventoryDetailsBlock}
+    ${ordersDetailsBlock}
+    ${scheduleDetailsBlock}
+    ${dispatchesDetailsBlock}
+    ${recoveryDetailsBlock}
 
     <div class="card no-print" style="display:grid; gap:10px;">
       <div class="section-head" style="margin-bottom:0;">

@@ -22,6 +22,7 @@ import {
   buildOrderCreatePayload,
   buildOrderUpdatePayload,
   buildPlantReport,
+  buildPlantReportCsv,
   buildRawMaterialCreatePayload,
   buildReprocessCreatePayload,
   buildScheduleCreatePayload,
@@ -353,5 +354,21 @@ test("buildDetailedEmailReportText, buildDailyLogMessengerText, and buildMailtoU
     body: "Hello Team"
   });
   assert.equal(mailto, "mailto:manager%4010kfeeds.ph?subject=Plant%20Report&body=Hello%20Team");
+
+  const ordersOnlyReport = buildPlantReport({
+    startDate: "2026-11-26",
+    endDate: "2026-11-26",
+    sectionFilter: "ALL",
+    includedSections: ["Orders"],
+    skus,
+    batches,
+    dispatches,
+    orders,
+    summaries
+  });
+  const ordersCsv = buildPlantReportCsv(ordersOnlyReport);
+  assert.match(ordersCsv, /CUSTOMER ORDERS IN PERIOD/);
+  assert.match(ordersCsv, /PO-900/);
+  assert.doesNotMatch(ordersCsv, /PRODUCTION RECOVERY BATCHES/);
 });
 

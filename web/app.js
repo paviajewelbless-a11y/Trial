@@ -48,6 +48,7 @@ import {
   buildOrderCreatePayload,
   buildOrderUpdatePayload,
   buildPlantReport,
+  buildPlantReportCsv,
   buildRawMaterialCreatePayload,
   buildRawMaterialUpdatePayload,
   buildReprocessCreatePayload,
@@ -594,45 +595,130 @@ function getTeamSuggestedEmails() {
 }
 
 function exportReportCsv(report) {
-  const rows = report.sectionSummaries.map((s) => [
-    s.section,
-    s.skuCount,
-    s.totalAvailableBags.toFixed(1),
-    s.totalAvailableStockKg.toFixed(1),
-    s.totalBags,
-    s.totalRecoveredKg.toFixed(1),
-    s.recoveryPct.toFixed(2)
-  ]);
-  downloadCsv(
-    `bulacan_plant_report_${report.startDate}_to_${report.endDate}.csv`,
-    ["Plant Section", "SKUs", "Available Bags", "Available Kg", "Produced Bags", "Recovered Kg", "Recovery %"],
-    rows
-  );
-  logBreadcrumb({ category: "Reports", action: "Exported Plant CSV", details: `${report.startDate} to ${report.endDate}`, severity: "Info" });
+  const filename = `bulacan_plant_report_${report.startDate}_to_${report.endDate}.csv`;
+  downloadFile(filename, buildPlantReportCsv(report), "text/csv;charset=utf-8;");
+  logBreadcrumb({ category: "Reports", action: "Exported Plant CSV", details: `${report.startDate} to ${report.endDate} (${report.includedSections.join(", ")})`, severity: "Info" });
 }
 
 function exportReportXls(report) {
-  const html = `
-    <html><head><meta charset="utf-8"/></head><body>
-      <h2>10K AGRI FEEDS • BULACAN PLANT REPORT (${escapeHtml(report.startDate)} to ${escapeHtml(report.endDate)})</h2>
-      <p>Plant Filter: ${escapeHtml(report.sectionFilter)} | Dispatched: ${report.totalDispatchedKg.toFixed(0)} kg | Open Orders: ${report.totalOpenOrdersKg.toFixed(0)} kg</p>
+  const inc = new Set(report.includedSections);
+  const scopeLabel = report.includedSections.join(", ");
+  const parts = [];
+
+  if (inc.has("Inventory") || inc.has("Recovery")) {
+    parts.push(`
+      <h3>Plant Section Overview</h3>
       <table border="1" cellspacing="0" cellpadding="6">
-        <thead><tr><th>Section</th><th>SKUs</th><th>Available Bags</th><th>Available Kg</th><th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th></tr></thead>
+        <thead><tr><th>Section</th><th>SKUs</th>${inc.has("Inventory") ? "<th>Available Bags</th><th>Available Kg</th>" : ""}${inc.has("Recovery") ? "<th>Produced Bags</th><th>Recovered Kg</th><th>Recovery %</th>" : ""}</tr></thead>
         <tbody>
           ${report.sectionSummaries
             .map(
-              (s) => `<tr><td>${escapeHtml(s.section)}</td><td>${s.skuCount}</td><td>${s.totalAvailableBags.toFixed(1)}</td><td>${s.totalAvailableStockKg.toFixed(1)}</td><td>${s.totalBags}</td><td>${s.totalRecoveredKg.toFixed(1)}</td><td>${s.recoveryPct.toFixed(2)}%</td></tr>`
+              (s) => `<tr><td>${escapeHtml(s.section)}</td><td>${s.skuCount}</td>${inc.has("Inventory") ? `<td>${s.totalAvailableBags.toFixed(1)}</td><td>${s.totalAvailableStockKg.toFixed(1)}</td>` : ""}${inc.has("Recovery") ? `<td>${s.totalBags}</td><td>${s.totalRecoveredKg.toFixed(1)}</td><td>${s.recoveryPct.toFixed(2)}%</td>` : ""}</tr>`
             )
             .join("")}
         </tbody>
       </table>
+    `);
+  }
+
+  if (inc.has("Inventory")) {
+    parts.push(`
+      <h3>Inventory Stock Breakdown</h3>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Product</th><th>Section</th><th>Available Bags</th><th>Available Kg</th><th>Produced Kg</th><th>Dispatched Kg</th><th>Open Orders Kg</th><th>Status</th></tr></thead>
+        <tbody>
+          ${report.filteredSummaries
+            .map(
+              (r) => `<tr><td>${escapeHtml(r.sku.productName)}</td><td>${escapeHtml(r.sku.section)}</td><td>${r.availableBags.toFixed(1)}</td><td>${r.availableStockKg.toFixed(1)}</td><td>${r.recoveredKg.toFixed(1)}</td><td>${r.dispatchedKg.toFixed(1)}</td><td>${r.openOrdersKg.toFixed(1)}</td><td>${escapeHtml(r.status)}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `);
+  }
+
+  if (inc.has("Orders")) {
+    const orderRows = [
+      ...report.filteredOrders,
+      ...report.activeOpenOrders.filter((ao) => !report.filteredOrders.some((fo) => fo.id === ao.id))
+    ];
+    parts.push(`
+      <h3>Customer Orders</h3>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Ordered Bags</th><th>Total Kg</th><th>Dispatched Kg</th><th>Due Date</th><th>Status</th></tr></thead>
+        <tbody>
+          ${orderRows
+            .map(
+              (o) => `<tr><td>${escapeHtml(o.orderCode)}</td><td>${escapeHtml(o.customer)}</td><td>${escapeHtml(o.productName)}</td><td>${o.orderedBags}</td><td>${Number(o.totalWeightKg || 0).toFixed(1)}</td><td>${Number(o.dispatchedWeightKg || 0).toFixed(1)}</td><td>${escapeHtml(o.dueDate || "")}</td><td>${escapeHtml(o.status)}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `);
+  }
+
+  if (inc.has("Schedule")) {
+    parts.push(`
+      <h3>Production Schedule Runs</h3>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Scheduled Date</th><th>Section</th><th>Product</th><th>Target Bags</th><th>Expected Kg</th><th>Priority</th><th>Linked Order</th><th>Status</th></tr></thead>
+        <tbody>
+          ${report.filteredSchedules
+            .map(
+              (sch) => `<tr><td>${escapeHtml(sch.scheduledDate)}</td><td>${escapeHtml(sch.section)}</td><td>${escapeHtml(sch.productName)}</td><td>${sch.targetBags}</td><td>${Number(sch.expectedWeightKg || 0).toFixed(1)}</td><td>${escapeHtml(sch.priority)}</td><td>${escapeHtml(sch.linkedOrderCode || "")}</td><td>${escapeHtml(sch.status)}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `);
+  }
+
+  if (inc.has("Dispatches")) {
+    parts.push(`
+      <h3>Dispatches &amp; Fleet Trips</h3>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Date</th><th>DR Ref</th><th>Customer</th><th>Product</th><th>Bags</th><th>Net Weight Kg</th><th>Driver</th><th>Truck</th><th>Status</th></tr></thead>
+        <tbody>
+          ${report.filteredDispatches
+            .map(
+              (d) => `<tr><td>${escapeHtml(d.date)}</td><td>${escapeHtml(d.drReference)}</td><td>${escapeHtml(d.customer)}</td><td>${escapeHtml(d.productName)}</td><td>${d.bagsDispatched}</td><td>${effectiveDispatchWeightKg(d).toFixed(1)}</td><td>${escapeHtml(d.driverName || "")}</td><td>${escapeHtml(d.truckNumber || "")}</td><td>${escapeHtml(resolvedDispatchStatus(d))}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `);
+  }
+
+  if (inc.has("Recovery")) {
+    parts.push(`
+      <h3>Production Recovery Batches</h3>
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead><tr><th>Date</th><th>Section</th><th>Product</th><th>Bags</th><th>Expected Kg</th><th>Recovered Kg</th><th>Recovery %</th><th>Remarks</th></tr></thead>
+        <tbody>
+          ${report.filteredBatches
+            .map(
+              (b) => `<tr><td>${escapeHtml(b.date)}</td><td>${escapeHtml(b.section)}</td><td>${escapeHtml(b.productName)}</td><td>${b.bagsProduced}</td><td>${Number(b.expectedWeightKg || 0).toFixed(1)}</td><td>${Number(b.actualRecoveredKg || 0).toFixed(1)}</td><td>${Number(b.recoveryPct || 100).toFixed(2)}%</td><td>${escapeHtml(b.remarks || "")}</td></tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `);
+  }
+
+  const html = `
+    <html><head><meta charset="utf-8"/></head><body>
+      <h2>10K AGRI FEEDS • BULACAN PLANT REPORT (${escapeHtml(report.startDate)} to ${escapeHtml(report.endDate)})</h2>
+      <p>Plant Filter: ${escapeHtml(report.sectionFilter)} | Sections: ${escapeHtml(scopeLabel)}</p>
+      ${parts.join("")}
     </body></html>
   `;
   downloadFile(`bulacan_plant_report_${report.startDate}.xls`, html, "application/vnd.ms-excel");
-  logBreadcrumb({ category: "Reports", action: "Exported Excel Report", details: `${report.startDate} to ${report.endDate}`, severity: "Info" });
+  logBreadcrumb({ category: "Reports", action: "Exported Excel Report", details: `${report.startDate} to ${report.endDate} (${scopeLabel})`, severity: "Info" });
 }
 
 function downloadReportSnapshotPng(report) {
+  const inc = new Set(report.includedSections);
+  const scopeLabel = report.includedSections.join(", ");
   const canvas = document.createElement("canvas");
   const width = 960;
   const rows = report.sectionSummaries || [];
@@ -655,20 +741,22 @@ function downloadReportSnapshotPng(report) {
   ctx.font = "bold 24px Inter, Segoe UI, sans-serif";
   ctx.fillText("10K AGRI FEEDS • BULACAN PLANT REPORT", 32, 46);
   ctx.fillStyle = "#cce8d9";
-  ctx.font = "16px Inter, Segoe UI, sans-serif";
+  ctx.font = "15px Inter, Segoe UI, sans-serif";
   const periodLabel = report.isDailyReport ? `Daily (${report.startDate})` : `${report.startDate} to ${report.endDate}`;
-  ctx.fillText(`Period: ${periodLabel}   |   Plant Filter: ${report.sectionFilter}`, 32, 82);
+  ctx.fillText(`Period: ${periodLabel}  |  Plant: ${report.sectionFilter}  |  Scope: ${scopeLabel}`, 32, 82);
 
-  // 4 KPI boxes
-  const kpis = [
-    { label: "AVAILABLE STOCK", value: `${formatNum(report.totalAvailableStockKg, 0)} kg`, sub: `${formatNum(report.totalAvailableBags, 1)} bags` },
-    { label: "PRODUCED IN PERIOD", value: `${report.totalProducedBags} b`, sub: `${formatNum(report.totalRecoveredKg, 0)} kg (${formatNum(report.avgRecoveryPct, 1)}%)` },
-    { label: "DISPATCHED IN PERIOD", value: `${formatNum(report.totalDispatchedKg, 0)} kg`, sub: `${report.filteredDispatches.length} trips` },
-    { label: "ACTIVE OPEN ORDERS", value: `${report.activeOpenOrders.length}`, sub: `${formatNum(report.totalOpenOrdersKg, 0)} kg left` }
-  ];
-  const cardW = 212;
+  // Selected KPI boxes (up to 4)
+  const kpis = [];
+  if (inc.has("Inventory")) kpis.push({ label: "AVAILABLE STOCK", value: `${formatNum(report.totalAvailableStockKg, 0)} kg`, sub: `${formatNum(report.totalAvailableBags, 1)} bags` });
+  if (inc.has("Orders")) kpis.push({ label: "CUSTOMER ORDERS", value: `${report.activeOpenOrders.length} open`, sub: `${formatNum(report.totalOpenOrdersKg, 0)} kg left` });
+  if (inc.has("Schedule")) kpis.push({ label: "SCHEDULED RUNS", value: `${report.filteredSchedules.length}`, sub: `${report.scheduledQueueBags || 0} bags queued` });
+  if (inc.has("Dispatches")) kpis.push({ label: "DISPATCHED IN PERIOD", value: `${formatNum(report.totalDispatchedKg, 0)} kg`, sub: `${report.filteredDispatches.length} trips` });
+  if (inc.has("Recovery") && kpis.length < 4) kpis.push({ label: "PRODUCED IN PERIOD", value: `${report.totalProducedBags} b`, sub: `${formatNum(report.totalRecoveredKg, 0)} kg (${formatNum(report.avgRecoveryPct, 1)}%)` });
+
+  const shownKpis = kpis.slice(0, 4);
   const gap = 16;
-  kpis.forEach((k, idx) => {
+  const cardW = shownKpis.length ? (width - 64 - gap * (shownKpis.length - 1)) / shownKpis.length : width - 64;
+  shownKpis.forEach((k, idx) => {
     const x = 32 + idx * (cardW + gap);
     const y = 134;
     ctx.fillStyle = "#ffffff";
@@ -2211,6 +2299,14 @@ function bindViewEvents(viewRoot, summaries, activeRole) {
       const t = todayIsoDate();
       state.reportStartDate = t;
       state.reportEndDate = t;
+      render();
+    };
+  }
+
+  const repAllSecBtn = document.getElementById("report-all-sections-btn");
+  if (repAllSecBtn) {
+    repAllSecBtn.onclick = () => {
+      state.reportIncludedSections = [...REPORT_SECTION_OPTIONS];
       render();
     };
   }
