@@ -5,21 +5,34 @@ import {
   HOSTED_WEB_URL,
   WORKSPACE_ROLE_OPTIONS,
   buildBatchCreatePayload,
+  buildBomCreatePayload,
+  buildBreadcrumbPayload,
   buildCsvReport,
+  buildCustomerCreatePayload,
   buildDispatchCreatePayload,
   buildGmailWebComposeUrl,
   buildInviteDocId,
   buildInviteEmailPayload,
   buildInviteRoleUpdatePayload,
   buildMemberRoleUpdatePayload,
+  buildMessengerSummaryText,
   buildOrderCreatePayload,
+  buildOrderUpdatePayload,
+  buildPlantReport,
   buildRawMaterialCreatePayload,
+  buildReprocessCreatePayload,
   buildScheduleCreatePayload,
+  buildSettingsCreatePayload,
   buildSkuCreatePayload,
+  buildSkuUpdatePayload,
   buildWebInviteLink,
   buildWorkspaceInvitePayload,
+  computeDailyLogs,
   computeKpis,
+  computeRawMaterialForecasts,
   computeSkuSummaries,
+  missingCatalogEntities,
+  parseBulkBatchRows,
   parseInviteQueryParams
 } from "../operations.js";
 
@@ -180,3 +193,126 @@ test("role update payload builders restrict keys to Firestore rules allowed fiel
     updatedAt: "SERVER_TS"
   });
 });
+
+test("computeRawMaterialForecasts uses BOM inclusion percentages and simulation multipliers", () => {
+  const materials = [
+    {
+      id: "m_corn",
+      name: "Whole Yellow Corn/Balanok Corn",
+      category: "Grains & Energy",
+      currentStockKg: 2000,
+      reorderThresholdKg: 800,
+      leadTimeDays: 3,
+      safetyDays: 2,
+      usageSharePct: 10
+    }
+  ];
+  const boms = [
+    {
+      productName: "Hog Starter Crumble",
+      lines: [{ materialId: "m_corn", materialName: "Whole Yellow Corn/Balanok Corn", inclusionPct: 50 }]
+    }
+  ];
+  const batches = [
+    { date: "2026-11-25", productName: "Hog Starter Crumble", expectedWeightKg: 1400, actualRecoveredKg: 1400 }
+  ];
+  const schedules = [
+    { status: "Scheduled", productName: "Hog Starter Crumble", expectedWeightKg: 7000 }
+  ];
+
+  const base = computeRawMaterialForecasts({ materials, batches, schedules, boms, lookbackDays: 7 });
+  assert.equal(base.length, 1);
+  assert.equal(base[0].sector.id, "MACRO");
+  assert.equal(base[0].historicalAvgDailyKg, 100);
+  assert.equal(base[0].simulatedAvgDailyKg, 100);
+
+  const sim = computeRawMaterialForecasts({
+    materials,
+    batches,
+    schedules,
+    boms,
+    lookbackDays: 7,
+    demandMultiplier: 2,
+    includeScheduledDemand: true
+  });
+  assert.equal(sim[0].simulatedAvgDailyKg, 700);
+  assert.equal(sim[0].status, "Order Now");
+});
+
+test("computeDailyLogs and buildPlantReport summarize daily and multi-section activity", () => {
+  const skus = [{ productName: "Hog Starter Crumble", section: "SAN ROQUE", openingStockKg: 500, standardBagWeightKg: 25 }];
+  const batches = [{ date: "2026-11-25", section: "SAN ROQUE", productName: "Hog Starter Crumble", bagsProduced: 40, expectedWeightKg: 1000, actualRecoveredKg: 990 }];
+  const dispatches = [{ date: "2026-11-25", sourcePlant: "SAN ROQUE", productName: "Hog Starter Crumble", bagsDispatched: 10, totalWeightKg: 250 }];
+  const orders = [{ orderDate: "2026-11-25", dueDate: "2026-11-26", productName: "Hog Starter Crumble", totalWeightKg: 500, dispatchedWeightKg: 250, status: "Partially Dispatched" }];
+  const summaries = computeSkuSummaries({ skus, batches, dispatches, orders });
+
+  const logs = computeDailyLogs({ skus, batches, dispatches, orders, todayIso: "2026-11-26" });
+  const log25 = logs.find((l) => l.date === "2026-11-25");
+  assert.ok(log25);
+  assert.equal(log25.totalProducedDayKg, 990);
+  assert.equal(log25.totalDispatchedDayKg, 250);
+  assert.equal(log25.skuRows[0].closingStockKg, 1240);
+
+  const report = buildPlantReport({
+    startDate: "2026-11-25",
+    endDate: "2026-11-25",
+    sectionFilter: "SAN ROQUE",
+    skus,
+    batches,
+    dispatches,
+    orders,
+    summaries
+  });
+  assert.equal(report.isDailyReport, true);
+  assert.equal(report.totalProducedBags, 40);
+  assert.equal(report.totalDispatchedKg, 250);
+  assert.match(buildMessengerSummaryText(report), /DAILY PLANT SUMMARY REPORT/);
+});
+
+test("parseBulkBatchRows, missingCatalogEntities, and additional payload builders", () => {
+  const parsed = parseBulkBatchRows(
+    "2026-11-25, PANDACAQUI, Chick Booster, 50, 25, 1240, MIXING/CONVEYOR\nInvalidLine",
+    "SAN ROQUE"
+  );
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].section, "PANDACAQUI");
+  assert.equal(parsed[0].actualRecoveredKg, 1240);
+
+  const missingMacro = missingCatalogEntities([{ name: "Whole Yellow Corn/Balanok Corn" }], false);
+  assert.equal(missingMacro.length, 8);
+
+  const ts = "TS";
+  assert.equal(buildSkuUpdatePayload({ productName: "Test SKU", openingStockKg: 100 }, ts).updatedAt, ts);
+  assert.equal(buildOrderUpdatePayload({ orderedBags: 10, bagWeightKg: 25 }, 100, ts).status, "Partially Dispatched");
+
+  const bom = buildBomCreatePayload("uid1", {
+    productName: "Hog Starter Crumble",
+    lines: [{ materialId: "m1", materialName: "US Soya", inclusionPct: 24 }]
+  }, ts);
+  assert.deepEqual(Object.keys(bom).sort(), [
+    "batchBaseKg", "createdAt", "lines", "notes", "productName", "section", "updatedAt", "userId", "yieldLossPct"
+  ]);
+
+  const rep = buildReprocessCreatePayload("uid1", {
+    productName: "Hog Starter Crumble",
+    returnedBags: 2,
+    bagWeightKg: 25,
+    status: "Damaged",
+    fastActionNeeded: true
+  }, ts);
+  assert.equal(rep.fastActionNeeded, false);
+  assert.equal(rep.flaggedToInventory, false);
+
+  const cust = buildCustomerCreatePayload("uid1", { name: "Bulacan Agro", priority: true }, ts);
+  assert.equal(cust.priority, true);
+
+  const settings = buildSettingsCreatePayload("uid1", { lookbackDays: 21, defaultSafetyBufferPct: 20 }, ts);
+  assert.deepEqual(Object.keys(settings).sort(), [
+    "createdAt", "defaultSafetyBufferPct", "lookbackDays", "seededOctober2026", "updatedAt", "userId"
+  ]);
+
+  const bc = buildBreadcrumbPayload("uid1", { category: "Orders", action: "Test" }, ts);
+  assert.equal(bc.category, "Orders");
+  assert.equal(bc.actorType, "User");
+});
+
