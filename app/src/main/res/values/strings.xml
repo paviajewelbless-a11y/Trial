@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">FeedMill Ops</string>
+    <string name="messenger_action_label">Messenger</string>
+    <string name="messenger_send_title">Send Report to Messenger</string>
+    <string name="messenger_send_confirm">Send to Messenger</string>
+    <string name="messenger_ready_badge">Messenger app detected</string>
+    <string name="messenger_fallback_badge">Messenger not installed — uses Share Sheet or Clipboard</string>
+    <string name="messenger_copied_notice">Messenger summary copied to clipboard.</string>
+</resources>

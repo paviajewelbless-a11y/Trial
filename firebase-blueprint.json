@@ -1,0 +1,378 @@
+{
+  "entities": {
+    "Sku": {
+      "title": "Sku",
+      "description": "Feed mill SKU catalog item and baseline inventory parameters for Bulacan Plant.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "productName": { "type": "string", "description": "SKU product name" },
+        "section": {
+          "type": "string",
+          "enum": ["SAN ROQUE", "PANDACAQUI", "LA UNION QUAIL FEEDS", "SELECTA"]
+        },
+        "openingStockKg": { "type": "number" },
+        "standardBagWeightKg": { "type": "number" },
+        "targetRecoveryPct": { "type": "number" },
+        "safetyBufferPct": { "type": "number" },
+        "defaultRemarks": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": ["userId", "productName", "section", "openingStockKg", "standardBagWeightKg", "targetRecoveryPct", "safetyBufferPct", "defaultRemarks", "createdAt", "updatedAt"]
+    },
+    "DispatchRecord": {
+      "title": "DispatchRecord",
+      "description": "Stock-out / delivery receipt dispatch log with driver, truck, return, and hold tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "productName": { "type": "string" },
+        "bagsDispatched": { "type": "integer" },
+        "bagWeightKg": { "type": "number" },
+        "totalWeightKg": { "type": "number" },
+        "drReference": { "type": "string" },
+        "customer": { "type": "string" },
+        "linkedOrderId": { "type": "string" },
+        "sourcePlant": { "type": "string", "description": "Origin plant section label or empty if unspecified" },
+        "driverName": { "type": "string" },
+        "truckNumber": { "type": "string" },
+        "helperName": { "type": "string" },
+        "remarks": { "type": "string" },
+        "dispatchStatus": { "type": "string", "enum": ["Delivered", "Returned", "Held"] },
+        "hasReturn": { "type": "boolean" },
+        "returnConfirmed": { "type": "boolean" },
+        "returnedBags": { "type": "integer" },
+        "returnedWeightKg": { "type": "number" },
+        "returnReason": { "type": "string" },
+        "isHeld": { "type": "boolean" },
+        "heldRemarks": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "date", "productName", "bagsDispatched", "bagWeightKg", "totalWeightKg", "drReference", "customer", "linkedOrderId", "createdAt", "updatedAt"]
+    },
+    "CustomerOrder": {
+      "title": "CustomerOrder",
+      "description": "Customer feed order driving production demand.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "orderCode": { "type": "string" },
+        "orderDate": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "productName": { "type": "string" },
+        "orderedBags": { "type": "integer" },
+        "bagWeightKg": { "type": "number" },
+        "totalWeightKg": { "type": "number" },
+        "dispatchedWeightKg": { "type": "number" },
+        "customer": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["Open", "Partially Dispatched", "Fulfilled", "Cancelled"]
+        },
+        "priority": { "type": "boolean" },
+        "rushOrder": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "orderCode", "orderDate", "dueDate", "productName", "orderedBags", "bagWeightKg", "totalWeightKg", "dispatchedWeightKg", "customer", "status", "createdAt", "updatedAt"]
+    },
+    "ProductionBatch": {
+      "title": "ProductionBatch",
+      "description": "Completed production batch and recovery variance record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "section": {
+          "type": "string",
+          "enum": ["SAN ROQUE", "PANDACAQUI", "LA UNION QUAIL FEEDS", "SELECTA"]
+        },
+        "productName": { "type": "string" },
+        "bagsProduced": { "type": "integer" },
+        "bagWeightKg": { "type": "number" },
+        "expectedWeightKg": { "type": "number" },
+        "actualRecoveredKg": { "type": "number" },
+        "varianceKg": { "type": "number" },
+        "recoveryPct": { "type": "number" },
+        "remarks": { "type": "string" },
+        "scheduleRunId": { "type": "string" },
+        "linkedOrderIds": { "type": "array", "items": { "type": "string" } },
+        "linkedOrderCodes": { "type": "array", "items": { "type": "string" } },
+        "scheduledForCustomers": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "date", "section", "productName", "bagsProduced", "bagWeightKg", "expectedWeightKg", "actualRecoveredKg", "varianceKg", "recoveryPct", "remarks", "createdAt", "updatedAt"]
+    },
+    "ScheduleRun": {
+      "title": "ScheduleRun",
+      "description": "Planned plant production run queued from stock/order deficit.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "scheduledDate": { "type": "string" },
+        "section": {
+          "type": "string",
+          "enum": ["SAN ROQUE", "PANDACAQUI", "LA UNION QUAIL FEEDS", "SELECTA"]
+        },
+        "productName": { "type": "string" },
+        "targetBags": { "type": "integer" },
+        "bagWeightKg": { "type": "number" },
+        "expectedWeightKg": { "type": "number" },
+        "lineRemarks": { "type": "string" },
+        "priority": {
+          "type": "string",
+          "enum": ["Urgent", "Order-Driven", "Buffer Top-Up"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Scheduled", "In Progress", "Completed", "Cancelled"]
+        },
+        "linkedOrderId": { "type": "string" },
+        "linkedOrderCode": { "type": "string" },
+        "linkedOrderIds": { "type": "array", "items": { "type": "string" } },
+        "linkedOrderCodes": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "scheduledDate", "section", "productName", "targetBags", "bagWeightKg", "expectedWeightKg", "lineRemarks", "priority", "status", "linkedOrderId", "linkedOrderCode", "createdAt", "updatedAt"]
+    },
+    "PlantSettings": {
+      "title": "PlantSettings",
+      "description": "User workspace plant settings and October 2026 seed state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "seededOctober2026": { "type": "boolean" },
+        "lookbackDays": { "type": "integer" },
+        "defaultSafetyBufferPct": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "seededOctober2026", "lookbackDays", "defaultSafetyBufferPct", "createdAt", "updatedAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Editable customer directory entry for Bulacan Plant orders and dispatches.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "notes": { "type": "string" },
+        "priority": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "notes", "createdAt", "updatedAt"]
+    },
+    "Breadcrumb": {
+      "title": "Breadcrumb",
+      "description": "Immutable user and system activity/navigation breadcrumb entry for Bulacan Plant audit history.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "actorType": { "type": "string", "enum": ["User", "System"] },
+        "category": {
+          "type": "string",
+          "enum": ["Navigation", "Inventory", "Orders", "Dispatch", "Schedule", "Recovery", "Reprocess", "Customers", "Reports", "AI Ops", "System"]
+        },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "screenTab": { "type": "string" },
+        "entityRef": { "type": "string" },
+        "trailPath": { "type": "string" },
+        "severity": { "type": "string", "enum": ["Info", "Success", "Warning", "Error"] },
+        "dateStr": { "type": "string", "description": "YYYY-MM-DD" },
+        "timeLabel": { "type": "string", "description": "HH:mm:ss" },
+        "timestampMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "actorType", "category", "action", "details", "screenTab", "entityRef", "trailPath", "severity", "dateStr", "timeLabel", "timestampMillis", "createdAt", "updatedAt"]
+    },
+    "RawMaterial": {
+      "title": "RawMaterial",
+      "description": "Raw feed mill ingredient stock, supplier lead time, consumption ratio, and alert settings.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": ["Grains & Energy", "Protein Meals", "Minerals & Salt", "Premix & Additives", "Liquids & Oils"]
+        },
+        "currentStockKg": { "type": "number" },
+        "reorderThresholdKg": { "type": "number" },
+        "usageSharePct": { "type": "number" },
+        "leadTimeDays": { "type": "integer" },
+        "safetyDays": { "type": "integer" },
+        "supplierName": { "type": "string" },
+        "alertsEnabled": { "type": "boolean" },
+        "lastRestockedDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "category", "currentStockKg", "reorderThresholdKg", "usageSharePct", "leadTimeDays", "safetyDays", "supplierName", "alertsEnabled", "lastRestockedDate", "createdAt", "updatedAt"]
+    },
+    "FeedBom": {
+      "title": "FeedBom",
+      "description": "Bill of Materials (BOM) formulation linking a finished feed SKU to its raw material percentages.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "productName": { "type": "string" },
+        "section": {
+          "type": "string",
+          "enum": ["SAN ROQUE", "PANDACAQUI", "LA UNION QUAIL FEEDS", "SELECTA"]
+        },
+        "batchBaseKg": { "type": "number" },
+        "yieldLossPct": { "type": "number" },
+        "lines": { "type": "array", "items": { "type": "object" } },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "productName", "section", "batchBaseKg", "yieldLossPct", "lines", "notes", "createdAt", "updatedAt"]
+    },
+    "ReprocessItem": {
+      "title": "ReprocessItem",
+      "description": "Returned feed product routed to reprocessing queue and flagged back to finished goods inventory.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "sourceDispatchId": { "type": "string" },
+        "drReference": { "type": "string" },
+        "customer": { "type": "string" },
+        "productName": { "type": "string" },
+        "section": {
+          "type": "string",
+          "enum": ["SAN ROQUE", "PANDACAQUI", "LA UNION QUAIL FEEDS", "SELECTA"]
+        },
+        "returnedDate": { "type": "string", "description": "YYYY-MM-DD" },
+        "returnedBags": { "type": "integer" },
+        "bagWeightKg": { "type": "number" },
+        "returnedWeightKg": { "type": "number" },
+        "reprocessedBags": { "type": "integer" },
+        "reprocessedWeightKg": { "type": "number" },
+        "returnReason": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["Pending Reprocess", "Reprocessing", "Flagged to Inventory", "Damaged"]
+        },
+        "fastActionNeeded": { "type": "boolean" },
+        "flaggedToInventory": { "type": "boolean" },
+        "reprocessedDate": { "type": "string" },
+        "actionNotes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "sourceDispatchId", "drReference", "customer", "productName", "section", "returnedDate", "returnedBags", "bagWeightKg", "returnedWeightKg", "reprocessedBags", "reprocessedWeightKg", "returnReason", "status", "fastActionNeeded", "flaggedToInventory", "reprocessedDate", "actionNotes", "createdAt", "updatedAt"]
+    },
+    "WorkspaceInvite": {
+      "title": "WorkspaceInvite",
+      "description": "Shared workspace invitation record linking an owner's Bulacan Plant workspace to a collaborator's Google email and assigned role.",
+      "type": "object",
+      "properties": {
+        "workspaceOwnerId": { "type": "string" },
+        "workspaceName": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "memberEmail": { "type": "string" },
+        "memberDisplayName": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["Admin", "Operator", "Viewer"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Active"]
+        },
+        "memberUid": { "type": "string" },
+        "invitedByEmail": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workspaceOwnerId", "workspaceName", "ownerEmail", "memberEmail", "memberDisplayName", "role", "status", "memberUid", "invitedByEmail", "createdAt", "updatedAt"]
+    },
+    "WorkspaceMember": {
+      "title": "WorkspaceMember",
+      "description": "Active collaborator membership document stored under /users/{userId}/team_members/{memberUid} for role enforcement.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "workspaceOwnerId": { "type": "string" },
+        "inviteId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["Admin", "Operator", "Viewer"]
+        },
+        "invitedByEmail": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "workspaceOwnerId", "inviteId", "email", "displayName", "role", "invitedByEmail", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/workspace_invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/WorkspaceInvite" },
+      "description": "Shared multi-user workspace invitations queried by owner or invited collaborator email."
+    },
+    "/users/{userId}/team_invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/WorkspaceInvite" },
+      "description": "Workspace-scoped mirror of shared team invitations for Admins and collaborators."
+    },
+    "/users/{userId}/team_members/{memberUid}": {
+      "schema": { "$ref": "#/entities/WorkspaceMember" },
+      "description": "Active team member role records for shared access to /users/{userId}."
+    },
+    "/users/{userId}/skus/{skuId}": {
+      "schema": { "$ref": "#/entities/Sku" },
+      "description": "User-scoped SKU catalog and opening stock records."
+    },
+    "/users/{userId}/dispatches/{dispatchId}": {
+      "schema": { "$ref": "#/entities/DispatchRecord" },
+      "description": "User-scoped stock-out and delivery receipt logs."
+    },
+    "/users/{userId}/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/CustomerOrder" },
+      "description": "User-scoped customer orders."
+    },
+    "/users/{userId}/production_batches/{batchId}": {
+      "schema": { "$ref": "#/entities/ProductionBatch" },
+      "description": "User-scoped production recovery logs."
+    },
+    "/users/{userId}/schedules/{scheduleId}": {
+      "schema": { "$ref": "#/entities/ScheduleRun" },
+      "description": "User-scoped scheduled production queue."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PlantSettings" },
+      "description": "User-scoped plant configuration and seed flag."
+    },
+    "/users/{userId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "User-scoped editable customer directory."
+    },
+    "/users/{userId}/breadcrumbs/{breadcrumbId}": {
+      "schema": { "$ref": "#/entities/Breadcrumb" },
+      "description": "User-scoped audit trail recording user and system breadcrumbs."
+    },
+    "/users/{userId}/raw_materials/{materialId}": {
+      "schema": { "$ref": "#/entities/RawMaterial" },
+      "description": "User-scoped raw material inventory and consumption forecast settings."
+    },
+    "/users/{userId}/boms/{bomId}": {
+      "schema": { "$ref": "#/entities/FeedBom" },
+      "description": "User-scoped feed formulation Bills of Materials (BOM)."
+    },
+    "/users/{userId}/reprocess_items/{reprocessId}": {
+      "schema": { "$ref": "#/entities/ReprocessItem" },
+      "description": "User-scoped returned products awaiting reprocessing or flagged back to inventory."
+    }
+  }
+}

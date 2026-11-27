@@ -1,0 +1,8 @@
+{
+  "name": "Remix 10K Agri FeedMill Ops Remix 5",
+  "description": "10K Agri Feeds - Bulacan Plant operations and inventory system for inventory monitoring, customer orders, dispatching, production recovery, scheduling, summary reports, and Gemini AI operations assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

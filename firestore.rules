@@ -1,0 +1,594 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasVerifiedEmail() {
+      return isSignedIn() &&
+             request.auth.token.email is string &&
+             request.auth.token.email.size() > 0 &&
+             request.auth.token.email_verified == true;
+    }
+
+    function authEmailLower() {
+      return request.auth.token.email.lower();
+    }
+
+    function memberDocPath(userId) {
+      return /databases/$(database)/documents/users/$(userId)/team_members/$(request.auth.uid);
+    }
+
+    function isMemberDocPresent(userId) {
+      return isSignedIn() && exists(memberDocPath(userId));
+    }
+
+    function memberRole(userId) {
+      return get(memberDocPath(userId)).data.role;
+    }
+
+    function isWorkspaceAdmin(userId) {
+      return isOwner(userId) || (isMemberDocPresent(userId) && memberRole(userId) == 'Admin');
+    }
+
+    function canWriteOperations(userId) {
+      return isOwner(userId) || (isMemberDocPresent(userId) && memberRole(userId) in ['Admin', 'Operator']);
+    }
+
+    function canReadWorkspace(userId) {
+      return isOwner(userId) || (isMemberDocPresent(userId) && memberRole(userId) in ['Admin', 'Operator', 'Viewer']);
+    }
+
+    function isValidWorkspaceRole(role) {
+      return role in ['Admin', 'Operator', 'Viewer'];
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSection(section) {
+      return section in ['SAN ROQUE', 'PANDACAQUI', 'LA UNION QUAIL FEEDS', 'SELECTA'];
+    }
+
+    function isValidDateStr(dateStr) {
+      return dateStr is string && dateStr.size() == 10 && dateStr.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidSku(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             isValidSection(data.section) &&
+             data.openingStockKg is number && data.openingStockKg >= 0 && data.openingStockKg <= 10000000 &&
+             data.standardBagWeightKg is number && data.standardBagWeightKg > 0 && data.standardBagWeightKg <= 2000 &&
+             data.targetRecoveryPct is number && data.targetRecoveryPct > 0 && data.targetRecoveryPct <= 120 &&
+             data.safetyBufferPct is number && data.safetyBufferPct >= 0 && data.safetyBufferPct <= 200 &&
+             data.defaultRemarks is string && data.defaultRemarks.size() <= 120;
+    }
+
+    function isValidDispatch(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidDateStr(data.date) &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             data.bagsDispatched is int && data.bagsDispatched > 0 && data.bagsDispatched <= 1000000 &&
+             data.bagWeightKg is number && data.bagWeightKg > 0 && data.bagWeightKg <= 2000 &&
+             data.totalWeightKg is number && data.totalWeightKg > 0 && data.totalWeightKg <= 50000000 &&
+             data.drReference is string && data.drReference.size() >= 1 && data.drReference.size() <= 80 &&
+             data.customer is string && data.customer.size() >= 1 && data.customer.size() <= 120 &&
+             data.linkedOrderId is string && data.linkedOrderId.size() <= 128 &&
+             (!('sourcePlant' in data) || (data.sourcePlant is string && (data.sourcePlant.size() == 0 || isValidSection(data.sourcePlant)))) &&
+             (!('driverName' in data) || (data.driverName is string && data.driverName.size() <= 120)) &&
+             (!('truckNumber' in data) || (data.truckNumber is string && data.truckNumber.size() <= 40)) &&
+             (!('helperName' in data) || (data.helperName is string && data.helperName.size() <= 120)) &&
+             (!('remarks' in data) || (data.remarks is string && data.remarks.size() <= 300)) &&
+             (!('dispatchStatus' in data) || data.dispatchStatus in ['Delivered', 'Returned', 'Held']) &&
+             (!('hasReturn' in data) || data.hasReturn is bool) &&
+             (!('returnConfirmed' in data) || data.returnConfirmed is bool) &&
+             (!('returnedBags' in data) || (data.returnedBags is int && data.returnedBags >= 0 && data.returnedBags <= data.bagsDispatched)) &&
+             (!('returnedWeightKg' in data) || (data.returnedWeightKg is number && data.returnedWeightKg >= 0 && data.returnedWeightKg <= data.totalWeightKg + 0.01)) &&
+             (!('returnReason' in data) || (data.returnReason is string && data.returnReason.size() <= 120)) &&
+             (!('isHeld' in data) || data.isHeld is bool) &&
+             (!('heldRemarks' in data) || (data.heldRemarks is string && data.heldRemarks.size() <= 300)) &&
+             (!('isHeld' in data) || !data.isHeld || (data.heldRemarks is string && data.heldRemarks.size() >= 1)) &&
+             (!('returnConfirmed' in data) || !data.returnConfirmed || (data.returnReason is string && data.returnReason.size() >= 1));
+    }
+
+    function isValidOrder(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.orderCode is string && data.orderCode.size() >= 1 && data.orderCode.size() <= 40 &&
+             isValidDateStr(data.orderDate) &&
+             isValidDateStr(data.dueDate) &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             data.orderedBags is int && data.orderedBags > 0 && data.orderedBags <= 1000000 &&
+             data.bagWeightKg is number && data.bagWeightKg > 0 && data.bagWeightKg <= 2000 &&
+             data.totalWeightKg is number && data.totalWeightKg > 0 && data.totalWeightKg <= 50000000 &&
+             data.dispatchedWeightKg is number && data.dispatchedWeightKg >= 0 && data.dispatchedWeightKg <= 50000000 &&
+             data.customer is string && data.customer.size() >= 1 && data.customer.size() <= 120 &&
+             data.status in ['Open', 'Partially Dispatched', 'Fulfilled', 'Cancelled'] &&
+             (!('priority' in data) || data.priority is bool) &&
+             (!('rushOrder' in data) || data.rushOrder is bool);
+    }
+
+    function isValidProductionBatch(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidDateStr(data.date) &&
+             isValidSection(data.section) &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             data.bagsProduced is int && data.bagsProduced > 0 && data.bagsProduced <= 1000000 &&
+             data.bagWeightKg is number && data.bagWeightKg > 0 && data.bagWeightKg <= 2000 &&
+             data.expectedWeightKg is number && data.expectedWeightKg > 0 && data.expectedWeightKg <= 50000000 &&
+             data.actualRecoveredKg is number && data.actualRecoveredKg > 0 && data.actualRecoveredKg <= 50000000 &&
+             data.varianceKg is number && data.varianceKg >= -5000000 && data.varianceKg <= 5000000 &&
+             data.recoveryPct is number && data.recoveryPct >= 0 && data.recoveryPct <= 200 &&
+             data.remarks is string && data.remarks.size() <= 120 &&
+             (!('scheduleRunId' in data) || (data.scheduleRunId is string && data.scheduleRunId.size() <= 128)) &&
+             (!('linkedOrderIds' in data) || (data.linkedOrderIds is list && data.linkedOrderIds.size() <= 100)) &&
+             (!('linkedOrderCodes' in data) || (data.linkedOrderCodes is list && data.linkedOrderCodes.size() <= 100)) &&
+             (!('scheduledForCustomers' in data) || (data.scheduledForCustomers is list && data.scheduledForCustomers.size() <= 100));
+    }
+
+    function isValidScheduleRun(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidDateStr(data.scheduledDate) &&
+             isValidSection(data.section) &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             data.targetBags is int && data.targetBags > 0 && data.targetBags <= 1000000 &&
+             data.bagWeightKg is number && data.bagWeightKg > 0 && data.bagWeightKg <= 2000 &&
+             data.expectedWeightKg is number && data.expectedWeightKg > 0 && data.expectedWeightKg <= 50000000 &&
+             data.lineRemarks is string && data.lineRemarks.size() >= 1 && data.lineRemarks.size() <= 120 &&
+             data.priority in ['Urgent', 'Order-Driven', 'Buffer Top-Up'] &&
+             data.status in ['Scheduled', 'In Progress', 'Completed', 'Cancelled'] &&
+             data.linkedOrderId is string && data.linkedOrderId.size() <= 128 &&
+             data.linkedOrderCode is string && data.linkedOrderCode.size() <= 40 &&
+             (!('linkedOrderIds' in data) || (data.linkedOrderIds is list && data.linkedOrderIds.size() <= 100)) &&
+             (!('linkedOrderCodes' in data) || (data.linkedOrderCodes is list && data.linkedOrderCodes.size() <= 100));
+    }
+
+    function isValidSettings(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.seededOctober2026 is bool &&
+             data.lookbackDays is int && data.lookbackDays >= 1 && data.lookbackDays <= 90 &&
+             data.defaultSafetyBufferPct is number && data.defaultSafetyBufferPct >= 0 && data.defaultSafetyBufferPct <= 100;
+    }
+
+    function isValidCustomer(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.notes is string && data.notes.size() <= 120 &&
+             (!('priority' in data) || data.priority is bool);
+    }
+
+    function isValidBreadcrumb(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.actorType in ['User', 'System'] &&
+             data.category in ['Navigation', 'Inventory', 'Orders', 'Dispatch', 'Schedule', 'Recovery', 'Reprocess', 'Customers', 'Reports', 'AI Ops', 'System'] &&
+             data.action is string && data.action.size() >= 1 && data.action.size() <= 160 &&
+             data.details is string && data.details.size() <= 500 &&
+             data.screenTab is string && data.screenTab.size() <= 60 &&
+             data.entityRef is string && data.entityRef.size() <= 120 &&
+             data.trailPath is string && data.trailPath.size() <= 240 &&
+             data.severity in ['Info', 'Success', 'Warning', 'Error'] &&
+             isValidDateStr(data.dateStr) &&
+              data.timeLabel is string && data.timeLabel.size() >= 1 && data.timeLabel.size() <= 20 &&
+             data.timestampMillis is int && data.timestampMillis >= 0;
+    }
+
+    function isValidRawMaterial(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.category in ['Grains & Energy', 'Protein Meals', 'Minerals & Salt', 'Premix & Additives', 'Liquids & Oils'] &&
+             data.currentStockKg is number && data.currentStockKg >= 0 && data.currentStockKg <= 50000000 &&
+             data.reorderThresholdKg is number && data.reorderThresholdKg >= 0 && data.reorderThresholdKg <= 50000000 &&
+             data.usageSharePct is number && data.usageSharePct > 0 && data.usageSharePct <= 100 &&
+             data.leadTimeDays is int && data.leadTimeDays >= 1 && data.leadTimeDays <= 60 &&
+             data.safetyDays is int && data.safetyDays >= 0 && data.safetyDays <= 30 &&
+             data.supplierName is string && data.supplierName.size() <= 120 &&
+             data.alertsEnabled is bool &&
+             data.lastRestockedDate is string && (data.lastRestockedDate.size() == 0 || isValidDateStr(data.lastRestockedDate));
+    }
+
+    function isValidBom(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             isValidSection(data.section) &&
+             data.batchBaseKg is number && data.batchBaseKg > 0 && data.batchBaseKg <= 100000 &&
+             data.yieldLossPct is number && data.yieldLossPct >= 0 && data.yieldLossPct <= 50 &&
+             data.lines is list && data.lines.size() >= 1 && data.lines.size() <= 40 &&
+             data.notes is string && data.notes.size() <= 300;
+    }
+
+    function isValidReprocessItem(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.sourceDispatchId is string && data.sourceDispatchId.size() <= 128 &&
+             data.drReference is string && data.drReference.size() <= 80 &&
+             data.customer is string && data.customer.size() <= 120 &&
+             data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120 &&
+             isValidSection(data.section) &&
+             isValidDateStr(data.returnedDate) &&
+             data.returnedBags is int && data.returnedBags >= 1 && data.returnedBags <= 1000000 &&
+             data.bagWeightKg is number && data.bagWeightKg > 0 && data.bagWeightKg <= 2000 &&
+             data.returnedWeightKg is number && data.returnedWeightKg > 0 && data.returnedWeightKg <= 50000000 &&
+             data.reprocessedBags is int && data.reprocessedBags >= 0 && data.reprocessedBags <= 1000000 &&
+             data.reprocessedWeightKg is number && data.reprocessedWeightKg >= 0 && data.reprocessedWeightKg <= 50000000 &&
+             data.returnReason is string && data.returnReason.size() >= 1 && data.returnReason.size() <= 120 &&
+             data.status in ['Pending Reprocess', 'Reprocessing', 'Flagged to Inventory', 'Damaged'] &&
+             data.fastActionNeeded is bool &&
+             data.flaggedToInventory is bool &&
+             data.reprocessedDate is string && (data.reprocessedDate.size() == 0 || isValidDateStr(data.reprocessedDate)) &&
+             data.actionNotes is string && data.actionNotes.size() <= 300 &&
+             (!data.flaggedToInventory || data.status == 'Flagged to Inventory') &&
+             (data.status != 'Damaged' || (!data.flaggedToInventory && !data.fastActionNeeded));
+    }
+
+    function isValidWorkspaceInvite(data) {
+      return data.workspaceOwnerId is string && data.workspaceOwnerId.size() >= 1 && data.workspaceOwnerId.size() <= 128 &&
+             data.workspaceName is string && data.workspaceName.size() >= 1 && data.workspaceName.size() <= 120 &&
+             data.ownerEmail is string && data.ownerEmail.size() <= 160 &&
+             data.memberEmail is string && data.memberEmail.size() >= 3 && data.memberEmail.size() <= 160 &&
+             data.memberEmail == data.memberEmail.lower() &&
+             data.memberDisplayName is string && data.memberDisplayName.size() <= 120 &&
+             isValidWorkspaceRole(data.role) &&
+             data.status in ['Pending', 'Active'] &&
+             data.memberUid is string && data.memberUid.size() <= 128 &&
+             data.invitedByEmail is string && data.invitedByEmail.size() >= 1 && data.invitedByEmail.size() <= 160;
+    }
+
+    function isValidWorkspaceMember(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.workspaceOwnerId is string && data.workspaceOwnerId.size() >= 1 && data.workspaceOwnerId.size() <= 128 &&
+             isValidId(data.inviteId) &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+             data.email == data.email.lower() &&
+             data.displayName is string && data.displayName.size() <= 120 &&
+             isValidWorkspaceRole(data.role) &&
+             data.invitedByEmail is string && data.invitedByEmail.size() >= 1 && data.invitedByEmail.size() <= 160;
+    }
+
+    match /workspace_invites/{inviteId} {
+      allow get: if isSignedIn() && isValidId(inviteId) && (
+        request.auth.uid == existing().workspaceOwnerId ||
+        isWorkspaceAdmin(existing().workspaceOwnerId) ||
+        (hasVerifiedEmail() && existing().memberEmail == authEmailLower())
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid == existing().workspaceOwnerId ||
+        (hasVerifiedEmail() && existing().memberEmail == authEmailLower())
+      );
+      allow create: if isSignedIn() && isValidId(inviteId) &&
+                       isValidWorkspaceInvite(incoming()) &&
+                       isWorkspaceAdmin(incoming().workspaceOwnerId) &&
+                       incoming().status == 'Pending' &&
+                       incoming().memberUid == '' &&
+                       (!hasVerifiedEmail() || incoming().memberEmail != authEmailLower() || incoming().workspaceOwnerId != request.auth.uid) &&
+                       incoming().keys().hasAll(['workspaceOwnerId', 'workspaceName', 'ownerEmail', 'memberEmail', 'memberDisplayName', 'role', 'status', 'memberUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['workspaceOwnerId', 'workspaceName', 'ownerEmail', 'memberEmail', 'memberDisplayName', 'role', 'status', 'memberUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time;
+      allow update: if isSignedIn() && isValidId(inviteId) &&
+                       isValidWorkspaceInvite(incoming()) &&
+                       incoming().workspaceOwnerId == existing().workspaceOwnerId &&
+                       incoming().memberEmail == existing().memberEmail &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         (isWorkspaceAdmin(existing().workspaceOwnerId) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'memberDisplayName', 'workspaceName', 'invitedByEmail', 'updatedAt'])) ||
+                         (hasVerifiedEmail() &&
+                          existing().memberEmail == authEmailLower() &&
+                          existing().status == 'Pending' &&
+                          incoming().status == 'Active' &&
+                          incoming().memberUid == request.auth.uid &&
+                          incoming().role == existing().role &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'memberUid', 'memberDisplayName', 'updatedAt']))
+                       );
+      allow delete: if isSignedIn() && isValidId(inviteId) && (
+        isWorkspaceAdmin(existing().workspaceOwnerId) ||
+        (hasVerifiedEmail() && existing().memberEmail == authEmailLower())
+      );
+    }
+
+    match /users/{userId}/team_invites/{inviteId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if isValidId(inviteId) && (canReadWorkspace(userId) || (hasVerifiedEmail() && existing().memberEmail == authEmailLower()));
+      allow create: if isWorkspaceAdmin(userId) && isValidId(inviteId) &&
+                       isValidWorkspaceInvite(incoming()) &&
+                       incoming().workspaceOwnerId == userId &&
+                       incoming().status == 'Pending' &&
+                       incoming().memberUid == '' &&
+                       (!hasVerifiedEmail() || incoming().memberEmail != authEmailLower() || userId != request.auth.uid) &&
+                       incoming().keys().hasAll(['workspaceOwnerId', 'workspaceName', 'ownerEmail', 'memberEmail', 'memberDisplayName', 'role', 'status', 'memberUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['workspaceOwnerId', 'workspaceName', 'ownerEmail', 'memberEmail', 'memberDisplayName', 'role', 'status', 'memberUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time;
+      allow update: if isSignedIn() && isValidId(inviteId) &&
+                       isValidWorkspaceInvite(incoming()) &&
+                       incoming().workspaceOwnerId == userId &&
+                       incoming().workspaceOwnerId == existing().workspaceOwnerId &&
+                       incoming().memberEmail == existing().memberEmail &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         (isWorkspaceAdmin(userId) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'memberDisplayName', 'workspaceName', 'invitedByEmail', 'updatedAt'])) ||
+                         (hasVerifiedEmail() &&
+                          existing().memberEmail == authEmailLower() &&
+                          existing().status == 'Pending' &&
+                          incoming().status == 'Active' &&
+                          incoming().memberUid == request.auth.uid &&
+                          incoming().role == existing().role &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'memberUid', 'memberDisplayName', 'updatedAt']))
+                       );
+      allow delete: if isValidId(inviteId) && (
+        isWorkspaceAdmin(userId) ||
+        (hasVerifiedEmail() && existing().memberEmail == authEmailLower())
+      );
+    }
+
+    match /users/{userId}/team_members/{memberUid} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if isValidId(memberUid) && (canReadWorkspace(userId) || isOwner(memberUid));
+      allow create: if isValidId(memberUid) &&
+                       memberUid != userId &&
+                       incoming().userId == memberUid &&
+                       incoming().workspaceOwnerId == userId &&
+                       incoming().keys().hasAll(['userId', 'workspaceOwnerId', 'inviteId', 'email', 'displayName', 'role', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'workspaceOwnerId', 'inviteId', 'email', 'displayName', 'role', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidWorkspaceMember(incoming()) &&
+                       (
+                         isWorkspaceAdmin(userId) ||
+                         (isOwner(memberUid) &&
+                          hasVerifiedEmail() &&
+                          incoming().email == authEmailLower() &&
+                          exists(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)) &&
+                          get(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)).data.workspaceOwnerId == userId &&
+                          get(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)).data.memberEmail == authEmailLower() &&
+                          get(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)).data.role == incoming().role &&
+                          (get(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)).data.status == 'Pending' ||
+                           get(/databases/$(database)/documents/workspace_invites/$(incoming().inviteId)).data.memberUid == request.auth.uid))
+                       );
+      allow update: if isWorkspaceAdmin(userId) &&
+                       isValidId(memberUid) &&
+                       memberUid != userId &&
+                       isValidWorkspaceMember(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().workspaceOwnerId == existing().workspaceOwnerId &&
+                       incoming().inviteId == existing().inviteId &&
+                       incoming().email == existing().email &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['role', 'displayName', 'updatedAt']);
+      allow delete: if isValidId(memberUid) && (isWorkspaceAdmin(userId) || isOwner(memberUid));
+    }
+
+    match /users/{userId}/skus/{skuId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(skuId);
+      allow delete: if isWorkspaceAdmin(userId) && isValidId(skuId);
+      allow create: if canWriteOperations(userId) && isValidId(skuId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'productName', 'section', 'openingStockKg', 'standardBagWeightKg', 'targetRecoveryPct', 'safetyBufferPct', 'defaultRemarks', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'productName', 'section', 'openingStockKg', 'standardBagWeightKg', 'targetRecoveryPct', 'safetyBufferPct', 'defaultRemarks', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidSku(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(skuId) &&
+                       isValidSku(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['productName', 'section', 'openingStockKg', 'standardBagWeightKg', 'targetRecoveryPct', 'safetyBufferPct', 'defaultRemarks', 'updatedAt']);
+    }
+
+    match /users/{userId}/dispatches/{dispatchId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(dispatchId);
+      allow delete: if canWriteOperations(userId) && isValidId(dispatchId);
+      allow create: if canWriteOperations(userId) && isValidId(dispatchId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'date', 'productName', 'bagsDispatched', 'bagWeightKg', 'totalWeightKg', 'drReference', 'customer', 'linkedOrderId', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'date', 'productName', 'bagsDispatched', 'bagWeightKg', 'totalWeightKg', 'drReference', 'customer', 'linkedOrderId', 'sourcePlant', 'driverName', 'truckNumber', 'helperName', 'remarks', 'dispatchStatus', 'hasReturn', 'returnConfirmed', 'returnedBags', 'returnedWeightKg', 'returnReason', 'isHeld', 'heldRemarks', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidDispatch(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(dispatchId) &&
+                       isValidDispatch(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['date', 'productName', 'bagsDispatched', 'bagWeightKg', 'totalWeightKg', 'drReference', 'customer', 'linkedOrderId', 'sourcePlant', 'driverName', 'truckNumber', 'helperName', 'remarks', 'dispatchStatus', 'hasReturn', 'returnConfirmed', 'returnedBags', 'returnedWeightKg', 'returnReason', 'isHeld', 'heldRemarks', 'updatedAt']);
+    }
+
+    match /users/{userId}/orders/{orderId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(orderId);
+      allow delete: if canWriteOperations(userId) && isValidId(orderId);
+      allow create: if canWriteOperations(userId) && isValidId(orderId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'orderCode', 'orderDate', 'dueDate', 'productName', 'orderedBags', 'bagWeightKg', 'totalWeightKg', 'dispatchedWeightKg', 'customer', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'orderCode', 'orderDate', 'dueDate', 'productName', 'orderedBags', 'bagWeightKg', 'totalWeightKg', 'dispatchedWeightKg', 'customer', 'status', 'priority', 'rushOrder', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidOrder(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(orderId) &&
+                       isValidOrder(incoming()) &&
+                       existing().status in ['Open', 'Partially Dispatched'] &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['dispatchedWeightKg', 'status', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'orderedBags', 'bagWeightKg', 'totalWeightKg', 'customer', 'priority', 'rushOrder', 'status', 'updatedAt'])
+                       );
+    }
+
+    match /users/{userId}/production_batches/{batchId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(batchId);
+      allow delete: if canWriteOperations(userId) && isValidId(batchId);
+      allow create: if canWriteOperations(userId) && isValidId(batchId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'date', 'section', 'productName', 'bagsProduced', 'bagWeightKg', 'expectedWeightKg', 'actualRecoveredKg', 'varianceKg', 'recoveryPct', 'remarks', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'date', 'section', 'productName', 'bagsProduced', 'bagWeightKg', 'expectedWeightKg', 'actualRecoveredKg', 'varianceKg', 'recoveryPct', 'remarks', 'scheduleRunId', 'linkedOrderIds', 'linkedOrderCodes', 'scheduledForCustomers', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidProductionBatch(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(batchId) &&
+                       isValidProductionBatch(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['date', 'section', 'productName', 'bagsProduced', 'bagWeightKg', 'expectedWeightKg', 'actualRecoveredKg', 'varianceKg', 'recoveryPct', 'remarks', 'scheduleRunId', 'linkedOrderIds', 'linkedOrderCodes', 'scheduledForCustomers', 'updatedAt']);
+    }
+
+    match /users/{userId}/schedules/{scheduleId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(scheduleId);
+      allow delete: if canWriteOperations(userId) && isValidId(scheduleId);
+      allow create: if canWriteOperations(userId) && isValidId(scheduleId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'scheduledDate', 'section', 'productName', 'targetBags', 'bagWeightKg', 'expectedWeightKg', 'lineRemarks', 'priority', 'status', 'linkedOrderId', 'linkedOrderCode', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'scheduledDate', 'section', 'productName', 'targetBags', 'bagWeightKg', 'expectedWeightKg', 'lineRemarks', 'priority', 'status', 'linkedOrderId', 'linkedOrderCode', 'linkedOrderIds', 'linkedOrderCodes', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidScheduleRun(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(scheduleId) &&
+                       isValidScheduleRun(incoming()) &&
+                       existing().status in ['Scheduled', 'In Progress'] &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['scheduledDate', 'targetBags', 'bagWeightKg', 'expectedWeightKg', 'lineRemarks', 'priority', 'status', 'linkedOrderId', 'linkedOrderCode', 'linkedOrderIds', 'linkedOrderCodes', 'updatedAt'])
+                       );
+    }
+
+    match /users/{userId}/settings/{settingId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(settingId);
+      allow delete: if isWorkspaceAdmin(userId) && isValidId(settingId);
+      allow create: if isWorkspaceAdmin(userId) && isValidId(settingId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'seededOctober2026', 'lookbackDays', 'defaultSafetyBufferPct', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'seededOctober2026', 'lookbackDays', 'defaultSafetyBufferPct', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidSettings(incoming());
+      allow update: if isWorkspaceAdmin(userId) && isValidId(settingId) &&
+                       isValidSettings(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['seededOctober2026', 'lookbackDays', 'defaultSafetyBufferPct', 'updatedAt']);
+    }
+
+    match /users/{userId}/customers/{customerId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(customerId);
+      allow delete: if canWriteOperations(userId) && isValidId(customerId);
+      allow create: if canWriteOperations(userId) && isValidId(customerId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'name', 'notes', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'name', 'notes', 'priority', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidCustomer(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(customerId) &&
+                       isValidCustomer(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'notes', 'priority', 'updatedAt']);
+    }
+
+    match /users/{userId}/breadcrumbs/{breadcrumbId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(breadcrumbId);
+      allow delete: if isWorkspaceAdmin(userId) && isValidId(breadcrumbId);
+      allow create: if canWriteOperations(userId) && isValidId(breadcrumbId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'actorType', 'category', 'action', 'details', 'screenTab', 'entityRef', 'trailPath', 'severity', 'dateStr', 'timeLabel', 'timestampMillis', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'actorType', 'category', 'action', 'details', 'screenTab', 'entityRef', 'trailPath', 'severity', 'dateStr', 'timeLabel', 'timestampMillis', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidBreadcrumb(incoming());
+      allow update: if false;
+    }
+
+    match /users/{userId}/raw_materials/{materialId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(materialId);
+      allow delete: if canWriteOperations(userId) && isValidId(materialId);
+      allow create: if canWriteOperations(userId) && isValidId(materialId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'name', 'category', 'currentStockKg', 'reorderThresholdKg', 'usageSharePct', 'leadTimeDays', 'safetyDays', 'supplierName', 'alertsEnabled', 'lastRestockedDate', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'name', 'category', 'currentStockKg', 'reorderThresholdKg', 'usageSharePct', 'leadTimeDays', 'safetyDays', 'supplierName', 'alertsEnabled', 'lastRestockedDate', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidRawMaterial(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(materialId) &&
+                       isValidRawMaterial(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'currentStockKg', 'reorderThresholdKg', 'usageSharePct', 'leadTimeDays', 'safetyDays', 'supplierName', 'alertsEnabled', 'lastRestockedDate', 'updatedAt']);
+    }
+
+    match /users/{userId}/boms/{bomId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(bomId);
+      allow delete: if canWriteOperations(userId) && isValidId(bomId);
+      allow create: if canWriteOperations(userId) && isValidId(bomId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'productName', 'section', 'batchBaseKg', 'yieldLossPct', 'lines', 'notes', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'productName', 'section', 'batchBaseKg', 'yieldLossPct', 'lines', 'notes', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidBom(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(bomId) &&
+                       isValidBom(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['productName', 'section', 'batchBaseKg', 'yieldLossPct', 'lines', 'notes', 'updatedAt']);
+    }
+
+    match /users/{userId}/reprocess_items/{reprocessId} {
+      allow list: if canReadWorkspace(userId);
+      allow get: if canReadWorkspace(userId) && isValidId(reprocessId);
+      allow delete: if canWriteOperations(userId) && isValidId(reprocessId);
+      allow create: if canWriteOperations(userId) && isValidId(reprocessId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'sourceDispatchId', 'drReference', 'customer', 'productName', 'section', 'returnedDate', 'returnedBags', 'bagWeightKg', 'returnedWeightKg', 'reprocessedBags', 'reprocessedWeightKg', 'returnReason', 'status', 'fastActionNeeded', 'flaggedToInventory', 'reprocessedDate', 'actionNotes', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'sourceDispatchId', 'drReference', 'customer', 'productName', 'section', 'returnedDate', 'returnedBags', 'bagWeightKg', 'returnedWeightKg', 'reprocessedBags', 'reprocessedWeightKg', 'returnReason', 'status', 'fastActionNeeded', 'flaggedToInventory', 'reprocessedDate', 'actionNotes', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidReprocessItem(incoming());
+      allow update: if canWriteOperations(userId) && isValidId(reprocessId) &&
+                       isValidReprocessItem(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['sourceDispatchId', 'drReference', 'customer', 'productName', 'section', 'returnedDate', 'returnedBags', 'bagWeightKg', 'returnedWeightKg', 'reprocessedBags', 'reprocessedWeightKg', 'returnReason', 'status', 'fastActionNeeded', 'flaggedToInventory', 'reprocessedDate', 'actionNotes', 'updatedAt']);
+    }
+  }
+}
